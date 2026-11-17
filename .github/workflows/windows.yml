@@ -22,6 +22,14 @@ jobs:
       - run: npm ci
       - run: npm run audit:public
       - run: python -m pip install pypdf Pillow
+      - name: Install independent PDF renderer
+        shell: pwsh
+        run: |
+          choco install poppler --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Poppler installation failed' }
+          $renderer = Get-ChildItem "$env:ChocolateyInstall\lib\poppler" -Filter pdftoppm.exe -Recurse | Select-Object -First 1
+          if (-not $renderer) { throw 'pdftoppm.exe was not installed' }
+          $renderer.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - run: npm run test:stage02
       - run: npm run test:stage03
       - run: npm run test:stage04

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -24,6 +24,7 @@ Math.sumPrecise ||= function (values) {
   return sum + correction;
 };
 const { getDocument } = await import('../public/pdfjs/build/pdf.mjs');
+mkdirSync(resolve('.local'), { recursive: true });
 execFileSync('python', [resolve('scripts/stage02-fixtures.py')], { stdio: 'pipe' });
 const root = resolve('test-results/stage02');
 const fontUrl = resolve('public/pdfjs/web/standard_fonts').replaceAll('\\', '/') + '/';

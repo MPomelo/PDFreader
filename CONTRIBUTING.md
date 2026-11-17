@@ -31,7 +31,9 @@ npm run test:workspace
 npm run test:native
 ```
 
-Python is only for test fixtures and independent PDF inspection. Some native
+Install Poppler and put `pdftoppm` on PATH for the independent PDF rendering
+check in `test:stage02` (Windows: `choco install poppler`; CI also locates its bin
+directory explicitly). Python is only for test fixtures and independent PDF inspection. Some native
 HTTP/credential tests are opt-in (`npm run test:native -- -- --include-ignored`).
 They use loopback servers and a temporary dummy credential, not a paid provider.
 Desktop UI checks require a Windows desktop and system Edge; see scripts named
