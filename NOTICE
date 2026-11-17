@@ -1,0 +1,29 @@
+PDFreader
+Copyright (c) 2026 MPomelo. Project-authored code is licensed under MIT.
+
+Third-party components retain their own licenses; the project MIT license
+does not replace their terms.
+
+PDF.js 6.5.438 — Mozilla Foundation and contributors, Apache-2.0.
+The generic viewer is vendored under public/pdfjs. PDFreader adds a host bridge,
+host-toolbar styling, viewer entry preferences, and a narrowly scoped standalone
+Text/Popup note patch in the display/worker modules. The reproducible patch is
+scripts/patch-pdfjs-notes.mjs. Upstream source: https://github.com/mozilla/pdf.js
+The upstream license is retained at public/pdfjs/LICENSE.
+
+Microsoft Fluent System Icons / @fluentui/react-icons — Microsoft Corporation,
+MIT. Icon source and attribution: public/licenses/Fluent-System-Icons.txt.
+The application icon is an original folded-page design; see src-tauri/icons.
+
+React, Markdown, KaTeX and all pinned JavaScript runtime dependencies:
+public/licenses/Runtime-JavaScript-Notices.txt.
+Tauri, WebView2 bindings, Rust runtime/build dependencies and source locations:
+public/licenses/Runtime-Rust-Notices.txt.
+Unmodified MPL-2.0 components remain available as source at the exact-version
+crates.io URLs listed in those notices. No MPL-licensed file was modified.
+
+PDFgear was consulted for interaction and toolbar grouping only. No PDFgear
+code, icons, branding, or screenshots are included.
+
+The two demonstration PDFs under docs/assets are original PDFreader examples.
+Translation shown in documentation screenshots uses an explicit mock response.

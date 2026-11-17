@@ -1,0 +1,49 @@
+{
+  "name": "pdfreader",
+  "version": "0.1.0-rc.1",
+  "private": true,
+  "overrides": {
+    "katex": "0.19.1"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 1421 --strictPort",
+    "tauri": "tauri",
+    "desktop:dev": "node scripts/desktop.mjs dev",
+    "desktop:build": "node scripts/desktop.mjs build",
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:selection": "node --test scripts/test-selection.mjs",
+    "test:stage02": "node --test scripts/test-selection.mjs scripts/test-stage02.mjs",
+    "test:stage03": "node --test scripts/test-stage03.mjs",
+    "test:stage04": "node --test scripts/test-stage04.mjs",
+    "test:native": "node scripts/desktop.mjs test",
+    "test:stage05": "node --test scripts/test-stage05.mjs",
+    "test:workspace": "node --test scripts/test-workspace.mjs",
+    "desktop:bundle": "node scripts/desktop.mjs bundle",
+    "audit:public": "node scripts/audit-public.mjs"
+  },
+  "dependencies": {
+    "@fluentui/react-icons": "2.0.316",
+    "@tauri-apps/api": "2.12.4",
+    "katex": "0.19.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-markdown": "10.1.0",
+    "rehype-katex": "7.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.1.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.8"
+  }
+}

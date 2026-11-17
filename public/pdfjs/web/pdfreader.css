@@ -1,0 +1,19 @@
+/* Small shell integration patch. Upstream Viewer controls remain upstream. */
+:root{--toolbar-bg-color:#fafafa;--toolbar-border-color:#e0e0e0;--body-bg-color:#e8e8e8;--button-hover-color:#ebebeb}
+#openFile,#secondaryOpenFile{display:none!important}
+.pdfreader-host-toolbar #toolbarContainer{height:0!important;padding:0!important;overflow:visible}
+.pdfreader-host-toolbar #toolbarViewer{visibility:hidden;height:0;pointer-events:none}
+.pdfreader-host-toolbar .editorParamsToolbar:not(.hidden),.pdfreader-host-toolbar #secondaryToolbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;right:8px;z-index:30;max-height:calc(100vh - 20px)}
+.pdfreader-host-toolbar #viewerContainer{inset-block-start:0}
+.pdfreader-host-toolbar #mainContainer{min-width:0}
+.pdfreader-host-toolbar #findbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;left:8px;z-index:40;max-width:calc(100vw - 16px)}
+.pdfreader-host-toolbar #secondaryToolbar{top:4px;max-height:calc(100vh - 16px)}
+/* Explicit theme follows the shell, rather than mixing a light toolbar with
+   white masks selected from the OS dark preference. Keep the PDF page intact. */
+:root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
+:root[data-theme=light]{color-scheme:light!important}
+:root[data-theme=dark]{color-scheme:dark!important;--toolbar-bg-color:#252525;--toolbar-border-color:#484848;--body-bg-color:#171717;--button-hover-color:#383838;--main-color:#eee;--toolbar-icon-bg-color:#eee;--toolbar-icon-hover-bg-color:#eee;--field-color:#eee;--field-bg-color:#303030}
+.toolbarButton:focus-visible{outline:2px solid light-dark(#0f6cbd,#79bdff);outline-offset:-2px}
+/* Standalone note editors contain only the upstream comment marker. */
+.annotationEditorLayer .pdfreaderNoteEditor{position:absolute;pointer-events:none;background:transparent;outline:none}
+.annotationEditorLayer .pdfreaderNoteEditor .annotationCommentButton,.annotationEditorLayer .pdfreaderNoteEditor .editToolbar{pointer-events:auto}

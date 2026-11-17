@@ -1,0 +1,21 @@
+node_modules/
+dist/
+src-tauri/target/
+.local/
+test-results/
+
+# Local release artifacts, credentials and generated code
+release/
+*.log
+*.pdb
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
+src-tauri/gen/
+# Private development handoff and machine-specific acceptance history
+docs/STATUS.md
+docs/PDFreader_Development_Plan.md
+docs/PDFreader_Execution_Playbook.md
+docs/STAGE-*_Acceptance.md

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PDFreader",
+  "version": "0.1.0-rc.1",
+  "identifier": "local.pomelo.pdfreader",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PDFreader",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; worker-src 'self' blob:; connect-src ipc: http://ipc.localhost 'self' blob:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "MPomelo",
+    "homepage": "https://github.com/MPomelo/PDFreader",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "shortDescription": "A focused PDF reader with multi-document tabs and selection translation.",
+    "category": "Productivity",
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": true,
+        "installerHooks": "installer/hooks.nsh"
+      }
+    },
+    "resources": {
+      "../LICENSE": "LICENSE.txt",
+      "../NOTICE": "NOTICE.txt",
+      "../public/licenses/": "licenses/",
+      "../public/pdfjs/LICENSE": "licenses/PDFjs.txt"
+    },
+    "useLocalToolsDir": true
+  }
+}
