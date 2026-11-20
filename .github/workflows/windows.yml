@@ -1,4 +1,4 @@
-name: Windows checks and candidate installer
+name: Windows checks and installer
 on:
   push:
     branches: [main]
@@ -39,8 +39,24 @@ jobs:
       - run: node scripts/collect-runtime-licenses.mjs
       - run: node scripts/collect-rust-licenses.mjs
       - run: npm run desktop:bundle
+      - name: Smoke-test Windows installer
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer is missing' }
+          $target = Join-Path $env:RUNNER_TEMP 'PDFreader installer test'
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$target" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exit code $($install.ExitCode)" }
+          $exe = Join-Path $target 'pdfreader.exe'
+          $uninstaller = Join-Path $target 'uninstall.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or -not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+            throw 'Installed executable or uninstaller is missing'
+          }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $exe)) { throw 'Silent uninstall failed' }
       - uses: actions/upload-artifact@v4
         with:
-          name: PDFreader-windows-x64-candidate
+          name: PDFreader-windows-x64-installer
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error

@@ -1,4 +1,4 @@
-# PDFreader 0.1.0-rc.2
+# PDFreader 1.0.0
 
 - 将窗口按钮并入标签栏，更新左上角的 PDFreader 图标。
 - 在应用工具菜单内展开更多 PDF 工具，保留页面、光标、布局及文档属性操作。
@@ -6,7 +6,7 @@
 - 支持下划线和删除线批注，导出为标准 PDF 批注。
 - 选中文字后右键可复制、高亮、添加下划线或删除线、写注释和翻译。
 
-Windows x64 安装包为 `PDFreader_0.1.0-rc.2_x64-setup.exe`。
+Windows 10/11 x64 安装包为 `PDFreader_1.0.0_x64-setup.exe`。同页提供 SHA-256 校验文件和构建清单。[下载 PDFreader 1.0](https://github.com/MPomelo/PDFreader/releases/tag/v1.0.0)
 
 ## PDFreader 0.1.0-rc.1
 

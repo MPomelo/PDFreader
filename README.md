@@ -4,7 +4,7 @@
 
 A focused Windows PDF reader with tabs, annotations, selection translation, and local notes.
 
-[下载候选版](https://github.com/MPomelo/PDFreader/releases) · [使用说明](docs/WORKSPACE_TABS_AND_SETTINGS.md) · [构建与贡献](CONTRIBUTING.md) · [隐私说明](docs/PRIVACY.md)
+[下载 PDFreader](https://github.com/MPomelo/PDFreader/releases/latest) · [使用说明](docs/WORKSPACE_TABS_AND_SETTINGS.md) · [构建与贡献](CONTRIBUTING.md) · [隐私说明](docs/PRIVACY.md)
 
 ![PDFreader 阅读与翻译界面](docs/assets/workspace-light.png)
 
@@ -13,7 +13,7 @@ A focused Windows PDF reader with tabs, annotations, selection translation, and 
 ## 功能
 
 - **多 PDF 标签**：多选或拖入文件，分别保留页码、缩放、选区、批注和译文；支持标签切换快捷键。
-- **阅读与批注**：目录、缩略图、查找、旋转、打印、高亮、文本、画笔与独立注释。注释和高亮分别操作。
+- **阅读与批注**：目录、缩略图、查找、旋转、打印、高亮、下划线、删除线、文本、画笔与独立注释。选中文字后右键可快速复制、标注或翻译。
 - **保留原件**：导出带批注的 PDF 副本；关闭标签或整窗时检查未保存修改，支持保存、放弃、取消。
 - **选区翻译**：流式输出、取消、Markdown 与常见数学排版；原始 Markdown 可复制并保存为笔记。
 - **简洁工作区**：浮窗可固定到侧栏，两侧宽度可调；集中设置、浅深主题、窄窗与专注阅读模式。
@@ -23,9 +23,9 @@ A focused Windows PDF reader with tabs, annotations, selection translation, and 
 
 ## 安装与开始
 
-当前版本为 **0.1.0-rc.2**，面向 Windows 10/11 x64 的候选版本。完整边界见[候选版验收说明](docs/RELEASE_CHECKLIST.md)及[版本说明](docs/RELEASE_NOTES.md)。
+当前正式版本为 **1.0.0**，适用于 Windows 10/11 x64。[查看版本说明](docs/RELEASE_NOTES.md)。
 
-1. 在 [Releases](https://github.com/MPomelo/PDFreader/releases) 下载 x64 的 `-setup.exe`，核对同版本 SHA256SUMS。
+1. 在 [最新发行版](https://github.com/MPomelo/PDFreader/releases/latest) 下载 x64 的 `-setup.exe`，核对同版本 SHA256SUMS。
 2. 运行安装程序。应用使用 Microsoft Edge WebView2 Runtime；已有运行时可离线阅读，缺失时安装程序需要联网下载安装运行时。日常使用无需 Node.js 或 Python。
 3. 点击“打开”或“＋”选择 PDF。也可在资源管理器的“打开方式”中选择 PDFreader；安装程序不会更改系统默认阅读器。
 4. 需要翻译时，在“设置 → API 服务”配置服务和密钥，保存后选择文字，按 Ctrl+Shift+Enter。

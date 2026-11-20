@@ -1,6 +1,6 @@
 {
   "name": "pdfreader",
-  "version": "0.1.0-rc.2",
+  "version": "1.0.0",
   "private": true,
   "overrides": {
     "katex": "0.19.1"
