@@ -53,7 +53,9 @@ try{
  associated(a);await page.waitForTimeout(600);assert.equal(await page.getByRole('tablist',{name:'PDF 文档'}).getByRole('tab').count(),2);
  evidence.push('Windows ShellExecute with installed optional PDFreader.PDF handler opens Unicode/space PDFs; repeated launches forward into existing tabs and preserve their state');
  await page.getByRole('button',{name:'查找',exact:true}).click();
- await frame().locator('#findInput').fill('Domain adaptation');await frame().locator('#findInput').press('Enter');await frame().locator('#findResultsCount').filter({hasText:/[1-9]/}).waitFor();await frame().locator('body').press('Escape');
+ const find=page.getByRole('search',{name:'文档内查找'});
+ await find.getByRole('searchbox').fill('Domain adaptation');await find.getByRole('status').filter({hasText:/[1-9] \/ [1-9]/}).waitFor();
+ await find.getByRole('button',{name:'关闭查找'}).click();await find.waitFor({state:'hidden'});
  // Use the actual editor, not serialized annotation injection.
  await page.getByRole('combobox',{name:'缩放',exact:true}).selectOption('page-fit');
  await page.getByRole('button',{name:'批注工具',exact:true}).click();await page.getByRole('button',{name:'添加文本',exact:true}).click();

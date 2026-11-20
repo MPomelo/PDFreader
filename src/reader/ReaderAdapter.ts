@@ -1,5 +1,5 @@
 export type SelectionRect = { page: number; x: number; y: number; width: number; height: number };
-export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'find' | 'rotate' | 'print' | 'highlight' | 'underline' | 'strikeout' | 'text' | 'ink' | 'select' | 'thumbnails' | 'hide-navigation'
+export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'rotate' | 'print' | 'highlight' | 'underline' | 'strikeout' | 'text' | 'ink' | 'select' | 'thumbnails' | 'hide-navigation'
   | 'first-page' | 'last-page' | 'rotate-left' | 'cursor-select' | 'cursor-hand' | 'scroll-page' | 'scroll-vertical' | 'scroll-horizontal' | 'scroll-wrapped' | 'spread-none' | 'spread-odd' | 'spread-even' | 'document-properties' | 'undo' | 'redo';
 export type ReaderState = {
   documentId: string; page: number; pages: number; selection: string; selectionRaw: string;
@@ -7,7 +7,9 @@ export type ReaderState = {
   outline: { title: string; index: number }[]; dirty: boolean; revision: number;
   zoom?: string; selectionAnchor?: string; selectionViewport?: { x: number; y: number; width: number; height: number } | null;
   selectionMenuOpen?: boolean;
+  find?: { requestId: string; status: 'pending' | 'found' | 'not-found' | 'wrapped'; current: number; total: number; previous: boolean } | null;
 };
+export type FindOptions = { highlightAll: boolean; caseSensitive: boolean; entireWord: boolean; matchDiacritics: boolean };
 export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string }
   | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' };
 type Pending = { resolve: (value: any) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -72,6 +74,10 @@ export class ReaderAdapter {
   markExported(token: string) { return this.request<ReaderState>('exported', { token }); }
   commentSelection() { return this.request<boolean>('comment-selection'); }
   showComments() { return this.request<boolean>('show-comments'); }
+  find(requestId: string, query: string, options: FindOptions, again: boolean, previous: boolean) {
+    this.send('find', { findId: requestId, query, options, again, previous });
+  }
+  closeFind() { if (!this.disposed && this.hasDocument) this.send('close-find'); }
   dismissSelectionMenu() { this.send('dismiss-selection-menu'); }
   navigate(index: number) { this.send('outline', { index }); }
   restore(page: number, zoom = 'auto') { return this.request<ReaderState>('restore', { page, zoom }); }

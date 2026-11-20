@@ -10,6 +10,7 @@ let documentId = '', activeDocument = null, selection = '', selectionRaw = '', s
 let outline = [], destinations = [], pageHasText = null, ledger = new ExportState();
 let queue = Promise.resolve(), scanSequence = 0, exporting = false;
 let pendingEdit = false;
+let hostToolbar = false, findResult = null;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
 const viewer = document.getElementById('viewer');
@@ -62,7 +63,7 @@ function state() {
   return { documentId, page: app.pdfViewer.currentPageNumber, pages: activeDocument.numPages,
     selection, selectionRaw, selectionRects, selectionAnchor, pageHasText, outline, zoom: String(app.pdfViewer.currentScaleValue || 'auto'),
     selectionViewport: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
-    selectionMenuOpen: selectionMenu.isOpen,
+    selectionMenuOpen: selectionMenu.isOpen, find: findResult,
     dirty: ledger.dirty || pendingEdit || hasCommentDraft(document), revision: ledger.revision };
 }
 function publish() {
@@ -103,6 +104,18 @@ async function readPageText() {
 }
 app.eventBus.on('pagechanging', () => { publish(); void readPageText(); });
 app.eventBus.on('scalechanging', publish);
+const findStatuses = ['found', 'not-found', 'wrapped', 'pending'];
+function updateFind({ source, state, previous, matchesCount }) {
+  if (!findResult || source.state?.findId !== findResult.requestId || !matchesCount) return;
+  const status = findStatuses[state] || findResult.status;
+  const { current, total } = matchesCount;
+  const backwards = previous ?? findResult.previous;
+  if (status === findResult.status && current === findResult.current && total === findResult.total && backwards === findResult.previous) return;
+  findResult = { ...findResult, status, current, total, previous: backwards };
+  publish();
+}
+app.eventBus.on('updatefindcontrolstate', updateFind);
+app.eventBus.on('updatefindmatchescount', updateFind);
 let scrollPending = false;
 document.getElementById('viewerContainer')?.addEventListener('scroll', () => {
   if (scrollPending || !selection) return;
@@ -195,15 +208,41 @@ window.addEventListener('message', event => {
   const message = event.data;
   if (message.type === 'hello') { post({ type: 'ready' }); return; }
   if (message.type === 'theme' && ['light','dark'].includes(message.theme)) { document.documentElement.dataset.theme = message.theme; document.documentElement.style.colorScheme = message.theme; return; }
-  if (message.type === 'host-ui') { app.secondaryToolbar?.close(); document.documentElement.classList.toggle('pdfreader-host-toolbar', message.enabled === true); window.dispatchEvent(new Event('resize')); return; }
+  if (message.type === 'host-ui') {
+    hostToolbar = message.enabled === true;
+    app.secondaryToolbar?.close();
+    if (hostToolbar) app.findBar?.close();
+    document.documentElement.classList.toggle('pdfreader-host-toolbar', hostToolbar);
+    window.dispatchEvent(new Event('resize'));
+    return;
+  }
   if (message.type === 'open') {
     selectionMenu.close();
     documentId = message.documentId;
     activeDocument = null; selection = ''; selectionRaw = ''; selectionRects = []; selectionAnchor = '';
-    outline = []; destinations = []; pageHasText = null; ++scanSequence;
+    outline = []; destinations = []; pageHasText = null; findResult = null; ++scanSequence;
     snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
   } else if (message.documentId !== documentId) return;
   if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); return; }
+  if (message.type === 'find' || message.type === 'close-find') {
+    if (!hostToolbar || !activeDocument || activeDocument !== app.pdfDocument) return;
+    if (message.type === 'close-find') {
+      if (!findResult) return;
+      findResult = null;
+      app.eventBus.dispatch('findbarclose', { source: app });
+      publish();
+    } else {
+      const { findId, query, options } = message;
+      if (typeof findId !== 'string' || typeof query !== 'string' || !options) return;
+      findResult = { requestId: findId, status: 'pending', current: 0, total: 0, previous: false };
+      app.eventBus.dispatch('find', {
+        source: app, findId, query, type: message.again ? 'again' : '', findPrevious: message.previous === true,
+        highlightAll: options.highlightAll === true, caseSensitive: options.caseSensitive === true,
+        entireWord: options.entireWord === true, matchDiacritics: options.matchDiacritics === true,
+      });
+    }
+    return;
+  }
   queue = queue.catch(() => {}).then(async () => {
     if (message.documentId !== documentId) return;
     const reply = (result, transfer = []) => parent.postMessage({ channel: 'pdfreader', documentId: message.documentId,
@@ -232,7 +271,6 @@ window.addEventListener('message', event => {
           else if (action === 'next') app.pdfViewer.currentPageNumber = Math.min(activeDocument.numPages, app.pdfViewer.currentPageNumber + 1);
           else if (action === 'zoom-in') app.zoomIn();
           else if (action === 'zoom-out') app.zoomOut();
-          else if (action === 'find') app.findBar.open();
           else if (action === 'rotate') app.rotatePages(90);
           else if (action === 'print') app.triggerPrinting();
           else if (action === 'select') app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: 0 });
@@ -300,6 +338,22 @@ window.addEventListener('message', event => {
 });
 // Route shell shortcuts from inside the embedded Viewer, including editing focus.
 window.addEventListener('keydown', event => {
+  const key = event.key.toLowerCase();
+  if (hostToolbar && !event.altKey && (event.ctrlKey || event.metaKey) &&
+      (key === 'f' && !event.shiftKey || key === 'g')) {
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!app.overlayManager?.active) parent.dispatchEvent(new KeyboardEvent('keydown', {
+      key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey, cancelable: true,
+    }));
+    return;
+  }
+  if (hostToolbar && key === 'escape' && !event.isComposing && !selectionMenu.isOpen && !app.overlayManager?.active &&
+      !(event.target instanceof Element && event.target.closest('textarea, [contenteditable=true]'))) {
+    if (!parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      return;
+    }
+  }
   if ((event.ctrlKey || event.metaKey) && (['w','tab'].includes(event.key.toLowerCase()) || /^[1-9]$/.test(event.key))) {
     event.preventDefault(); event.stopImmediatePropagation();
     parent.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, ctrlKey: true, shiftKey: event.shiftKey })); return;

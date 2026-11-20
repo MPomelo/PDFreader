@@ -6,8 +6,7 @@
 .pdfreader-host-toolbar .editorParamsToolbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;right:8px;z-index:30;max-height:calc(100vh - 20px)}
 .pdfreader-host-toolbar #viewerContainer{inset-block-start:0}
 .pdfreader-host-toolbar #mainContainer{min-width:0}
-.pdfreader-host-toolbar #findbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;left:8px;z-index:40;max-width:calc(100vw - 16px)}
-.pdfreader-host-toolbar #secondaryToolbar{display:none!important}
+.pdfreader-host-toolbar :is(#findbar,#secondaryToolbar){display:none!important}
 /* Explicit theme follows the shell, rather than mixing a light toolbar with
    white masks selected from the OS dark preference. Keep the PDF page intact. */
 :root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
