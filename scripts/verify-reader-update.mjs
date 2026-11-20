@@ -128,6 +128,7 @@ try {
   });
   await hostButton('导出').click();
   await expect(page.getByRole('status').filter({ hasText: '已导出' })).toBeVisible();
+  await expect(page.locator('.document-tab.selected .dirty-dot')).toBeHidden();
   await writeFile(exported, Buffer.from(await page.evaluate(() => window.exportBytes)));
   assert.deepEqual(await readFile(original), originalBytes);
   execFileSync('python', ['-c', `
@@ -140,19 +141,21 @@ for page, subtypes in zip(pages, [('/Underline', '/StrikeOut'), ('/StrikeOut',)]
     for mark in marks:
         assert len(mark['/QuadPoints']) >= 8 and mark['/AP']['/N'].get_data()
 `, exported]);
+  await page.reload();
+  await hostButton('设置').click();
+  await expect(page.getByLabel('译文字号')).toHaveValue('18');
+  await hostButton('关闭设置').click();
   await openPDF(exported);
   await expect(page.getByRole('tab', { name: 'markup-update.pdf' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.document-pane[data-active=true] .loading')).toBeHidden({ timeout: 60000 });
   await expect(frame.locator('.underlineAnnotation').first()).toBeVisible();
   await expect(frame.locator('.strikeoutAnnotation').first()).toBeVisible();
-  await frame.locator('.underlineAnnotation').first().dblclick();
-  await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode)).toBe(9);
+  // A two-line annotation has a clipped gap between its hit areas.
+  await frame.locator('.underlineAnnotation').first().dblclick({ position: { x: 14, y: 11 } });
+  await expect(frame.locator('.page[data-page-number="1"] .highlightEditor.selectedEditor')).toBeVisible();
   await frame.locator('.highlightEditor.selectedEditor').press('Delete');
   await expect(page.locator('.document-tab.selected .dirty-dot')).toBeVisible();
 
-  const reopened = await context.newPage();
-  await reopened.goto(url + 'test-results/workspace/app.html');
-  await reopened.getByRole('button', { name: '设置', exact: true }).click();
-  await expect(reopened.getByLabel('译文字号')).toHaveValue('18');
   assert.deepEqual(errors, []);
   console.log('Verified the brand, Tools menu, font settings, selection menu, cross-page PDF markup, undo/redo, export and reopen.');
 } finally {
