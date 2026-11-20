@@ -300,7 +300,8 @@ test('actual bridge requires durable export acknowledgement and retains edits af
   const location = { origin: 'http://pdfreader.test' };
   const parent = { postMessage: message => messages.push(message) };
   const window = { addEventListener: (type, callback) => { if (type === 'message') handlers.set(type, callback); } };
-  const document = { addEventListener() {}, getElementById() { return null; } };
+  const textSize = { addEventListener() {} };
+  const document = { addEventListener() {}, getElementById(id) { return id === 'editorFreeTextFontSize' ? textSize : null; } };
   let hash = '', failSave = false;
   const storage = { size: 1, get serializable() { return { hash }; }, onSetModified: null, onResetModified: null };
   const pdf = { numPages: 2, annotationStorage: storage, getOutline: async () => null,
@@ -314,7 +315,8 @@ test('actual bridge requires durable export acknowledgement and retains edits af
   };
   const source = readFileSync('public/pdfjs/web/bridge.mjs', 'utf8').replace(/^import .*;\r?$/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  await new AsyncFunction('app', 'options', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, window, document, parent, location, class {});
+  const createSelectionMenu = () => ({ isOpen: false, close() {} });
+  await new AsyncFunction('app', 'options', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, window, document, parent, location, class {});
   const send = async (type, extra = {}) => {
     const requestId = crypto.randomUUID();
     handlers.get('message')({ source: parent, origin: location.origin, data: { channel: 'pdfreader', documentId: 'document-one', requestId, type, ...extra } });

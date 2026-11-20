@@ -2997,7 +2997,7 @@ class AnnotationEditorUIManager {
     const {
       currentLayer
     } = this;
-    if (currentLayer.hasTextLayer(textLayer)) {
+    if (currentLayer?.hasTextLayer(textLayer)) {
       return currentLayer;
     }
     for (const layer of this.#allLayers.values()) {
@@ -3006,6 +3006,43 @@ class AnnotationEditorUIManager {
       }
     }
     return null;
+  }
+  addSelectionMarkup(markup, methodOfCreation) {
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed || this.#mode === AnnotationEditorType.DISABLE) return false;
+    const ranges = Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i));
+    const targets = [];
+    for (const textLayer of this.#viewer.querySelectorAll(".textLayer")) {
+      const clipped = [];
+      for (const range of ranges) {
+        if (!range.intersectsNode(textLayer)) continue;
+        const part = document.createRange();
+        part.selectNodeContents(textLayer);
+        if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
+          part.setStart(range.startContainer, range.startOffset);
+        }
+        if (range.compareBoundaryPoints(Range.END_TO_END, part) < 0) {
+          part.setEnd(range.endContainer, range.endOffset);
+        }
+        if (part.toString().trim()) clipped.push(part);
+      }
+      if (!clipped.length) continue;
+      const layer = this.#getLayerForTextLayer(textLayer);
+      const boxes = this.getSelectionBoxes(textLayer, clipped);
+      if (!layer || !boxes?.length) return false;
+      targets.push({ layer, boxes, text: clipped.map(part => part.toString()).join(" ") });
+    }
+    if (!targets.length) return false;
+    selection.removeAllRanges();
+    this.#floatingToolbar?.hide();
+    this.unselectAll();
+    const editors = targets.map(({ layer, ...data }) => layer.addSelectionMarkup({ ...data, markup, methodOfCreation }));
+    this.addCommands({
+      cmd: () => editors.forEach(editor => this.rebuild(editor)),
+      undo: () => editors.forEach(editor => editor.remove()),
+      mustExec: false,
+    });
+    return true;
   }
   highlightSelection(methodOfCreation = "", comment = false) {
     const selection = document.getSelection();
@@ -3421,9 +3458,19 @@ class AnnotationEditorUIManager {
     if (!this.isShiftKeyDown && event.key === "Shift") {
       this.isShiftKeyDown = true;
     }
-    if (this.#mode !== AnnotationEditorType.NONE && !this.isEditorHandlingKeyboard) {
+    if (this.isEditorHandlingKeyboard) return;
+    if (this.#mode !== AnnotationEditorType.NONE) {
       AnnotationEditorUIManager._keyboardManager.exec(this, event);
+      return;
     }
+    // One-shot text markup keeps the selection tool active.
+    if (!(event.ctrlKey || event.metaKey) || event.altKey ||
+        !this.#container.contains(event.target) || event.target.closest?.("input, textarea, [contenteditable=true]")) return;
+    const key = event.key.toLowerCase();
+    const action = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" ? "redo" : "";
+    if (!action || !(action === "undo" ? this.#commandManager.hasSomethingToUndo() : this.#commandManager.hasSomethingToRedo())) return;
+    this[action]();
+    event.preventDefault();
   }
   keyup(event) {
     if (this.isShiftKeyDown && event.key === "Shift") {
@@ -4178,16 +4225,13 @@ class AnnotationEditorUIManager {
   get imageManager() {
     return shadow(this, "imageManager", new ImageManager());
   }
-  getSelectionBoxes(textLayer) {
-    if (!textLayer) {
-      return null;
+  getSelectionBoxes(textLayer, ranges) {
+    if (!textLayer) return null;
+    if (!ranges) {
+      const selection = document.getSelection();
+      ranges = Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i));
     }
-    const selection = document.getSelection();
-    for (let i = 0, ii = selection.rangeCount; i < ii; i++) {
-      if (!textLayer.contains(selection.getRangeAt(i).commonAncestorContainer)) {
-        return null;
-      }
-    }
+    if (ranges.some(range => !textLayer.contains(range.commonAncestorContainer))) return null;
     const {
       x: layerX,
       y: layerY,
@@ -4230,8 +4274,7 @@ class AnnotationEditorUIManager {
         break;
     }
     const boxes = [];
-    for (let i = 0, ii = selection.rangeCount; i < ii; i++) {
-      const range = selection.getRangeAt(i);
+    for (const range of ranges) {
       if (range.collapsed) {
         continue;
       }
@@ -21436,6 +21479,7 @@ class UnderlineAnnotationElement extends AnnotationElement {
       ignoreBorder: true,
       createQuadrilaterals: true
     });
+    this.annotationEditorType = AnnotationEditorType.HIGHLIGHT;
   }
   render() {
     const {
@@ -21449,6 +21493,7 @@ class UnderlineAnnotationElement extends AnnotationElement {
       this._createPopup();
     }
     this.container.classList.add("underlineAnnotation");
+    if (this.data.isEditable) this._editOnDoubleClick();
     if (overlaidText) {
       const underline = document.createElement("u");
       underline.classList.add("overlaidText");
@@ -21494,6 +21539,7 @@ class StrikeOutAnnotationElement extends AnnotationElement {
       ignoreBorder: true,
       createQuadrilaterals: true
     });
+    this.annotationEditorType = AnnotationEditorType.HIGHLIGHT;
   }
   render() {
     const {
@@ -21507,6 +21553,7 @@ class StrikeOutAnnotationElement extends AnnotationElement {
       this._createPopup();
     }
     this.container.classList.add("strikeoutAnnotation");
+    if (this.data.isEditable) this._editOnDoubleClick();
     if (overlaidText) {
       const strikeout = document.createElement("s");
       strikeout.classList.add("overlaidText");
@@ -24318,8 +24365,14 @@ class HighlightOutline extends Outline {
     this.firstPoint = firstPoint;
     this.lastPoint = lastPoint;
   }
-  static build(boxes, isLTR) {
-    const outline = new HighlightOutliner(boxes, 0.001).getOutlines();
+  static build(boxes, isLTR, markup) {
+    // Draw on the selected line while keeping the full text quads for PDF export.
+    const marks = markup ? boxes.map(({ x, y, width, height }) => {
+      const thickness = Math.min(height * 0.16, 0.002);
+      const offset = markup === "underline" ? height - thickness : (height - thickness) / 2;
+      return { x, y: y + offset, width, height: thickness };
+    }) : boxes;
+    const outline = new HighlightOutliner(marks, markup ? 0 : 0.001).getOutlines();
     outline.#boxes = boxes;
     outline.focusOutline = new HighlightOutliner(boxes, 0.0025, 0.001, isLTR).getOutlines();
     return outline;
@@ -24534,6 +24587,8 @@ class HighlightDrawingOptions extends DrawingOptions {
   }
 }
 class HighlightEditor extends DrawingEditor {
+  #markup;
+  #groupedUndo;
   #anchorNode = null;
   #anchorOffset = 0;
   #focusNode = null;
@@ -24568,6 +24623,8 @@ class HighlightEditor extends DrawingEditor {
     this.#focusOffset = params.focusOffset || 0;
     this.#methodOfCreation = params.methodOfCreation || (this._drawOutlines?.isFree ? "main_toolbar" : "");
     this.#text = params.text || "";
+    this.#markup = params.markup;
+    this.#groupedUndo = params.groupedUndo;
     this._isDraggable = false;
     this.defaultL10nId = "pdfjs-editor-highlight-editor";
     this.rotate();
@@ -24605,11 +24662,13 @@ class HighlightEditor extends DrawingEditor {
     if (!boxes && !drawOutlines) {
       return;
     }
-    this._drawingOptions ||= params.drawingOptions || HighlightEditor.getDefaultDrawingOptions();
+    this._drawingOptions ||= params.drawingOptions || HighlightEditor.getDefaultDrawingOptions(
+      params.markup ? { fill: params.markup === "underline" ? "#1463a3" : "#b42331" } : undefined
+    );
     if (boxes) {
       params = {
         ...params,
-        drawOutlines: HighlightOutline.build(boxes, this._uiManager.direction === "ltr")
+        drawOutlines: HighlightOutline.build(boxes, this._uiManager.direction === "ltr", params.markup)
       };
     }
     super._addOutlines(params);
@@ -24708,10 +24767,10 @@ class HighlightEditor extends DrawingEditor {
     return super.getRect(tx, ty, this._drawRotation);
   }
   onceAdded(focus) {
-    if (!this.annotationElementId) {
+    if (!this.annotationElementId && !this.#groupedUndo) {
       this.parent.addUndoableEditor(this);
     }
-    if (focus) {
+    if (focus && !this.#groupedUndo) {
       this.div.focus();
     }
   }
@@ -24839,7 +24898,7 @@ class HighlightEditor extends DrawingEditor {
           height: (quadPoints[i + 1] - quadPoints[i + 5]) / pageHeight
         });
       }
-      return HighlightOutline.build(boxes, uiManager.direction === "ltr");
+      return HighlightOutline.build(boxes, uiManager.direction === "ltr", data.markup);
     }
     const thickness = data.thickness || this._defaultDrawingOptions.thickness;
     const points = (data.inkLists || data.outlines.points)[0];
@@ -24853,7 +24912,7 @@ class HighlightEditor extends DrawingEditor {
   }
   static async deserialize(data, parent, uiManager) {
     let initialData = null;
-    if (data instanceof HighlightAnnotationElement) {
+    if (data instanceof HighlightAnnotationElement || data instanceof UnderlineAnnotationElement || data instanceof StrikeOutAnnotationElement) {
       const {
         data: {
           quadPoints,
@@ -24876,7 +24935,8 @@ class HighlightEditor extends DrawingEditor {
       } = data;
       initialData = data = {
         annotationType: AnnotationEditorType.HIGHLIGHT,
-        color: Array.from(color),
+        markup: data instanceof UnderlineAnnotationElement ? "underline" : data instanceof StrikeOutAnnotationElement ? "strikeout" : undefined,
+        color: Array.from(color || [0, 0, 0]),
         opacity,
         quadPoints,
         pageIndex: pageNumber - 1,
@@ -24933,6 +24993,7 @@ class HighlightEditor extends DrawingEditor {
       };
     }
     const editor = await super.deserialize(data, parent, uiManager);
+    editor.#markup = data.markup;
     editor._initialData = initialData;
     if (data.comment) {
       editor.setCommentData(data);
@@ -24954,6 +25015,19 @@ class HighlightEditor extends DrawingEditor {
       quadPoints: this._drawOutlines.serializeQuadPoints(this.pageTranslation, this.pageDimensions),
       outlines: this._drawOutlines.serialize(serialized.rect, this._drawRotation)
     });
+    if (this.#markup) {
+      serialized.markup = this.#markup;
+      // The appearance is a thin line but the annotation rectangle encloses all selected text.
+      const rect = [Infinity, Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < serialized.quadPoints.length; i += 2) {
+        const x = serialized.quadPoints[i], y = serialized.quadPoints[i + 1];
+        rect[0] = Math.min(rect[0], x);
+        rect[1] = Math.min(rect[1], y);
+        rect[2] = Math.max(rect[2], x);
+        rect[3] = Math.max(rect[3], y);
+      }
+      serialized.rect = rect;
+    }
     this.addComment(serialized);
     if (this.annotationElementId && !this.#hasElementChanged(serialized)) {
       return null;
@@ -28244,6 +28318,14 @@ class AnnotationEditorLayer {
   async deserialize(data) {
     return (await AnnotationEditorLayer.#editorTypes.get(data.annotationType ?? data.annotationEditorType)?.deserialize(data, this, this.#uiManager)) || null;
   }
+  addSelectionMarkup(data) {
+    const editor = new HighlightEditor({
+      parent: this, id: this.#uiManager.getId(), x: 0, y: 0,
+      uiManager: this.#uiManager, groupedUndo: true, ...data,
+    });
+    this.add(editor);
+    return editor;
+  }
   createAndAddNewEditor(event, isCentered, data = {}) {
     const id = this.#uiManager.getId();
     const editor = this.#createNewEditor({
@@ -29255,3 +29337,5 @@ export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, Anno
 
 //# sourceMappingURL=pdf.mjs.map
 // PDFreader standalone notes patch
+
+// PDFreader text markup patch

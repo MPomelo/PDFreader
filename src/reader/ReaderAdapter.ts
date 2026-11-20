@@ -1,12 +1,15 @@
 export type SelectionRect = { page: number; x: number; y: number; width: number; height: number };
-export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'find' | 'rotate' | 'print' | 'highlight' | 'text' | 'ink' | 'select' | 'tools' | 'thumbnails' | 'hide-navigation';
+export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'find' | 'rotate' | 'print' | 'highlight' | 'underline' | 'strikeout' | 'text' | 'ink' | 'select' | 'thumbnails' | 'hide-navigation'
+  | 'first-page' | 'last-page' | 'rotate-left' | 'cursor-select' | 'cursor-hand' | 'scroll-page' | 'scroll-vertical' | 'scroll-horizontal' | 'scroll-wrapped' | 'spread-none' | 'spread-odd' | 'spread-even' | 'document-properties' | 'undo' | 'redo';
 export type ReaderState = {
   documentId: string; page: number; pages: number; selection: string; selectionRaw: string;
   selectionRects: SelectionRect[]; pageHasText: boolean | null;
   outline: { title: string; index: number }[]; dirty: boolean; revision: number;
   zoom?: string; selectionAnchor?: string; selectionViewport?: { x: number; y: number; width: number; height: number } | null;
+  selectionMenuOpen?: boolean;
 };
-export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string };
+export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string }
+  | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' };
 type Pending = { resolve: (value: any) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 /** The only boundary between the shell and the fixed-version generic Viewer. */
@@ -38,6 +41,7 @@ export class ReaderAdapter {
     } else if (message.type === 'error') this.onEvent({ type: 'error', message: message.message });
     else if (message.type === 'export-requested') this.onEvent({ type: 'export-requested' });
     else if (message.type === 'file-open-requested') this.onEvent({ type: 'file-open-requested', bytes: message.bytes, filename: message.filename });
+    else if (message.type === 'dismiss-menus' || message.type === 'translate-selection' || message.type === 'selection-copied') this.onEvent({ type: message.type });
   };
   private rejectPending(reason: string) {
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(reason)); }

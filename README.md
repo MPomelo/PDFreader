@@ -23,7 +23,7 @@ A focused Windows PDF reader with tabs, annotations, selection translation, and 
 
 ## 安装与开始
 
-当前版本为 **0.1.0-rc.1**，面向 Windows 10/11 x64 的候选版本。完整边界见[候选版验收说明](docs/RELEASE_CHECKLIST.md)及[版本说明](docs/RELEASE_NOTES.md)。
+当前版本为 **0.1.0-rc.2**，面向 Windows 10/11 x64 的候选版本。完整边界见[候选版验收说明](docs/RELEASE_CHECKLIST.md)及[版本说明](docs/RELEASE_NOTES.md)。
 
 1. 在 [Releases](https://github.com/MPomelo/PDFreader/releases) 下载 x64 的 `-setup.exe`，核对同版本 SHA256SUMS。
 2. 运行安装程序。应用使用 Microsoft Edge WebView2 Runtime；已有运行时可离线阅读，缺失时安装程序需要联网下载安装运行时。日常使用无需 Node.js 或 Python。

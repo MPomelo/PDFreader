@@ -3,11 +3,11 @@
 #openFile,#secondaryOpenFile{display:none!important}
 .pdfreader-host-toolbar #toolbarContainer{height:0!important;padding:0!important;overflow:visible}
 .pdfreader-host-toolbar #toolbarViewer{visibility:hidden;height:0;pointer-events:none}
-.pdfreader-host-toolbar .editorParamsToolbar:not(.hidden),.pdfreader-host-toolbar #secondaryToolbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;right:8px;z-index:30;max-height:calc(100vh - 20px)}
+.pdfreader-host-toolbar .editorParamsToolbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;right:8px;z-index:30;max-height:calc(100vh - 20px)}
 .pdfreader-host-toolbar #viewerContainer{inset-block-start:0}
 .pdfreader-host-toolbar #mainContainer{min-width:0}
 .pdfreader-host-toolbar #findbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;left:8px;z-index:40;max-width:calc(100vw - 16px)}
-.pdfreader-host-toolbar #secondaryToolbar{top:4px;max-height:calc(100vh - 16px)}
+.pdfreader-host-toolbar #secondaryToolbar{display:none!important}
 /* Explicit theme follows the shell, rather than mixing a light toolbar with
    white masks selected from the OS dark preference. Keep the PDF page intact. */
 :root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
@@ -17,3 +17,35 @@
 /* Standalone note editors contain only the upstream comment marker. */
 .annotationEditorLayer .pdfreaderNoteEditor{position:absolute;pointer-events:none;background:transparent;outline:none}
 .annotationEditorLayer .pdfreaderNoteEditor .annotationCommentButton,.annotationEditorLayer .pdfreaderNoteEditor .editToolbar{pointer-events:auto}
+
+.pdfreader-selection-menu {
+  position: fixed;
+  z-index: 70;
+  padding: 5px;
+  min-width: min(136px, calc(100vw - 8px));
+  max-width: calc(100vw - 8px);
+  max-height: calc(100vh - 8px);
+  overflow: auto;
+  color: var(--main-color);
+  background: var(--field-bg-color);
+  border: 1px solid var(--toolbar-border-color);
+  border-radius: 6px;
+  box-shadow: 0 5px 18px #0003;
+}
+.pdfreader-selection-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: 13px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
+  text-align: start;
+  cursor: pointer;
+}
+.pdfreader-selection-menu button:hover,
+.pdfreader-selection-menu button:focus-visible { background: var(--button-hover-color); }
+.pdfreader-selection-menu [data-action="copy"] { border-block-end: 1px solid var(--toolbar-border-color); }
+.pdfreader-selection-menu [data-action="translate"] { border-block-start: 1px solid var(--toolbar-border-color); }
+#pdfreader-text-size { min-width: 3ch; text-align: end; }

@@ -2,8 +2,9 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { ApiConfig, ApiResult, Profile } from '../translation/client';
 export type Layout = { left: boolean; right: boolean; reading: boolean; floating: boolean; leftWidth: number; rightWidth: number; theme: 'light' | 'dark' };
 export type Recent = { fingerprint: string; name: string; path: string; page: number; zoom: string; time: string };
-export type ReaderPreferences = { restoreProgress: boolean; defaultZoom: string; selectionPopup: boolean; showMetadata: boolean; showOriginal: boolean };
-export const DEFAULT_READER_PREFERENCES: ReaderPreferences = { restoreProgress: true, defaultZoom: 'auto', selectionPopup: true, showMetadata: false, showOriginal: false };
+export const TRANSLATION_FONT_SIZES = [14, 16, 18, 20];
+export type ReaderPreferences = { restoreProgress: boolean; defaultZoom: string; selectionPopup: boolean; showMetadata: boolean; showOriginal: boolean; translationFontSize: number };
+export const DEFAULT_READER_PREFERENCES: ReaderPreferences = { restoreProgress: true, defaultZoom: 'auto', selectionPopup: true, showMetadata: false, showOriginal: false, translationFontSize: TRANSLATION_FONT_SIZES[0] };
 export type Book = { version: 1; layout: Layout; recents: Recent[]; preferences?: ReaderPreferences };
 export type Note = { id: string; fingerprint: string; name: string; page: number; original: string; originalRaw: string; markdown: string; model: string; service: string; domain: string; language: string; time: string };
 type Notebook = { version: 1; notes: Note[] };
@@ -24,7 +25,12 @@ export function validate(kind: Kind, value: unknown): RecordData {
   if (!data || data.version !== 1) throw Error('本地数据版本或结构无效，未覆盖原文件');
   if (kind === 'state') {
     const layout = data.layout;
-    if (data.preferences != null && (!['restoreProgress','selectionPopup','showMetadata','showOriginal'].every(k => typeof data.preferences[k] === 'boolean') || !['auto','page-width','page-fit','1','1.25','1.5','2'].includes(data.preferences.defaultZoom))) throw Error('阅读设置数据无效，未覆盖原文件');
+    if (data.preferences != null) {
+      if (!['restoreProgress','selectionPopup','showMetadata','showOriginal'].every(k => typeof data.preferences[k] === 'boolean') || !['auto','page-width','page-fit','1','1.25','1.5','2'].includes(data.preferences.defaultZoom)) throw Error('阅读设置数据无效，未覆盖原文件');
+      if (!TRANSLATION_FONT_SIZES.includes(data.preferences.translationFontSize)) {
+        data.preferences = { ...data.preferences, translationFontSize: DEFAULT_READER_PREFERENCES.translationFontSize };
+      }
+    }
     if (!layout || !['light','dark'].includes(layout.theme) || !['left','right','reading','floating'].every(k => typeof layout[k] === 'boolean') || !Number.isFinite(layout.leftWidth) || layout.leftWidth < 160 || layout.leftWidth > 400 || !Number.isFinite(layout.rightWidth) || layout.rightWidth < 280 || layout.rightWidth > 720 || !Array.isArray(data.recents) || data.recents.length > 20 || !data.recents.every((r: Recent) => r && hashPattern.test(r.fingerprint) && text(r.name, 1000) && text(r.path, 32768) && Number.isSafeInteger(r.page) && r.page > 0 && text(r.zoom, 40) && text(r.time, 50))) throw Error('阅读进度数据损坏，未覆盖原文件');
   } else if (kind === 'notes') {
     if (!Array.isArray(data.notes) || data.notes.length > 500 || !data.notes.every((n: Note) => n && hashPattern.test(n.fingerprint) && ['id','name','original','originalRaw','markdown','model','service','domain','language','time'].every(k => text((n as any)[k])) && Number.isSafeInteger(n.page) && n.page > 0)) throw Error('笔记数据损坏，未覆盖原文件');

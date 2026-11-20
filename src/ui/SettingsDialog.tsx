@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dismiss20Regular, Settings20Regular, Translate20Regular, PlugConnected20Regular, Database20Regular } from '@fluentui/react-icons';
 import { TranslationPanel } from '../translation/TranslationPanel';
-import { repository, exportNotes, type ReaderPreferences } from '../local/repository';
+import { repository, exportNotes, TRANSLATION_FONT_SIZES, type ReaderPreferences } from '../local/repository';
 export type SettingsSection = 'general' | 'translation' | 'api' | 'data';
 export function SettingsDialog({ open, initialSection, onClose, theme, onTheme, preferences, onPreferences, automatic, onAutomatic, documentKey }: { open: boolean; initialSection: SettingsSection; onClose: () => void; theme: 'light' | 'dark'; onTheme: (theme: 'light' | 'dark') => void; preferences: ReaderPreferences; onPreferences: (preferences: ReaderPreferences) => void; automatic: boolean; onAutomatic: (enabled: boolean) => void; documentKey: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -17,6 +17,7 @@ export function SettingsDialog({ open, initialSection, onClose, theme, onTheme, 
       <div className="settings-content">
         {section === 'general' && <section><h2>阅读与外观</h2><label className="field">界面主题<select aria-label="界面主题" value={theme} onChange={event => onTheme(event.target.value as 'light' | 'dark')}><option value="light">浅色</option><option value="dark">深色</option></select></label>
           <label className="field">首次打开时的缩放<select aria-label="首次打开时的缩放" value={preferences.defaultZoom} onChange={event => onPreferences({ ...preferences, defaultZoom: event.target.value })}><option value="auto">自动</option><option value="page-width">适合页宽</option><option value="page-fit">适合页面</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
+          <label className="field">译文字号<select value={preferences.translationFontSize} onChange={event => onPreferences({ ...preferences, translationFontSize: Number(event.target.value) })}>{TRANSLATION_FONT_SIZES.map(size => <option key={size} value={size}>{size} px</option>)}</select></label>
           <label className="checkbox"><input type="checkbox" checked={preferences.restoreProgress} onChange={event => onPreferences({ ...preferences, restoreProgress: event.target.checked })} />恢复上次阅读进度</label>
           <label className="checkbox"><input type="checkbox" checked={preferences.selectionPopup} onChange={event => onPreferences({ ...preferences, selectionPopup: event.target.checked })} />选中文字时显示浮窗翻译入口</label>
           <label className="checkbox"><input type="checkbox" checked={preferences.showOriginal} onChange={event => onPreferences({ ...preferences, showOriginal: event.target.checked })} />译文中默认展开原文</label>

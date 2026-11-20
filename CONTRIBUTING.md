@@ -44,9 +44,10 @@ proof of a live provider response. Do not add provider calls to CI.
 ## PDF.js and licensing
 
 The pinned generic viewer is vendored under `public/pdfjs`. Host integration
-lives in `bridge.mjs`, viewer preferences/styles, and the standalone note patch.
-Apply `scripts/patch-pdfjs-notes.mjs` only to the matching upstream version after
-reviewing its guards; upgrading requires rerunning annotation/export regressions.
+lives in `bridge.mjs`, viewer preferences/styles, and the annotation patches.
+For the matching upstream version, apply `scripts/patch-pdfjs-notes.mjs` followed
+by `scripts/patch-pdfjs-text-markup.mjs`. Rerun annotation and export checks after
+upgrading PDF.js.
 Keep upstream notices and regenerate both runtime license inventories before
 distributing a build. `NOTICE` lists original and third-party components.
 

@@ -3,6 +3,7 @@ import { PDFViewerApplication as app, PDFViewerApplicationOptions as options } f
 import { normalizeSelectionText } from './selection-text.mjs';
 import { ExportState } from './export-state.mjs';
 import { hasCommentDraft, commitCommentDraft } from './comment-tools.mjs';
+import { copySelectionText, createSelectionMenu, hasTextSelection } from './selection-menu.mjs';
 options.set('enableScripting', false);
 await app.initializedPromise;
 let documentId = '', activeDocument = null, selection = '', selectionRaw = '', selectionRects = [], selectionAnchor = '';
@@ -11,6 +12,49 @@ let queue = Promise.resolve(), scanSequence = 0, exporting = false;
 let pendingEdit = false;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
+const viewer = document.getElementById('viewer');
+const selectionMenu = createSelectionMenu(viewer, {
+  run: action => { void runSelectionAction(action).catch(error => post({ type: 'error', message: error.message })); },
+  onVisibility: () => publish(),
+  onDismissHostMenus: () => { if (activeDocument) post({ type: 'dismiss-menus' }); },
+});
+const controls = {
+  highlight: 'editorHighlightButton', text: 'editorFreeTextButton', ink: 'editorInkButton',
+  'first-page': 'firstPage', 'last-page': 'lastPage', 'rotate-left': 'pageRotateCcw',
+  'cursor-select': 'cursorSelectTool', 'cursor-hand': 'cursorHandTool',
+  'scroll-page': 'scrollPage', 'scroll-vertical': 'scrollVertical', 'scroll-horizontal': 'scrollHorizontal', 'scroll-wrapped': 'scrollWrapped',
+  'spread-none': 'spreadNone', 'spread-odd': 'spreadOdd', 'spread-even': 'spreadEven',
+  'document-properties': 'documentProperties',
+};
+const textSize = document.getElementById('editorFreeTextFontSize');
+function updateTextSize() { document.getElementById('pdfreader-text-size').value = textSize.value; }
+textSize.addEventListener('input', updateTextSize);
+app.eventBus.on('annotationeditorparamschanged', updateTextSize);
+
+function addMarkup(action, source) {
+  const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+  if (!manager?.addSelectionMarkup(action === 'highlight' ? undefined : action, source)) {
+    throw Error('无法标记这段文字，请重新选择已加载的 PDF 文字。');
+  }
+  scheduleObserve();
+}
+function commentSelection(source) {
+  const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+  if (!manager?.hasCommentManager()) throw Error('当前文档的注释工具尚未准备好');
+  if (!hasTextSelection(window.getSelection(), viewer)) throw Error('请先在 PDF 中选中要注释的文字');
+  manager.commentSelection(source);
+}
+async function runSelectionAction(action) {
+  if (!activeDocument || activeDocument !== app.pdfDocument) return;
+  if (action === 'copy') {
+    await copySelectionText(window.getSelection().toString());
+    post({ type: 'selection-copied' });
+  } else if (action === 'translate') {
+    updateSelection();
+    if (selection) post({ type: 'translate-selection' });
+  } else if (action === 'comment') commentSelection('pdfreader_context_menu');
+  else addMarkup(action, 'pdfreader_context_menu');
+}
 const storageHash = () => activeDocument?.annotationStorage.serializable.hash || '';
 function state() {
   const current = window.getSelection?.();
@@ -18,6 +62,7 @@ function state() {
   return { documentId, page: app.pdfViewer.currentPageNumber, pages: activeDocument.numPages,
     selection, selectionRaw, selectionRects, selectionAnchor, pageHasText, outline, zoom: String(app.pdfViewer.currentScaleValue || 'auto'),
     selectionViewport: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
+    selectionMenuOpen: selectionMenu.isOpen,
     dirty: ledger.dirty || pendingEdit || hasCommentDraft(document), revision: ledger.revision };
 }
 function publish() {
@@ -110,8 +155,8 @@ document.addEventListener('change', event => {
   if (file) void requestFile(file).catch(error => post({ type: 'error', message: String(error) }));
 }, true);
 
-document.addEventListener('selectionchange', () => {
-  const current = window.getSelection(), viewer = document.getElementById('viewer');
+function updateSelection() {
+  const current = window.getSelection();
   selectionRaw = ''; selection = ''; selectionRects = []; selectionAnchor = '';
   if (current?.anchorNode && viewer.contains(current.anchorNode) && !current.isCollapsed) {
     selectionRaw = current.toString();
@@ -142,15 +187,17 @@ document.addEventListener('selectionchange', () => {
     }
   }
   publish();
-});
+}
+document.addEventListener('selectionchange', updateSelection);
 
 window.addEventListener('message', event => {
   if (event.source !== parent || event.origin !== location.origin || event.data?.channel !== 'pdfreader') return;
   const message = event.data;
   if (message.type === 'hello') { post({ type: 'ready' }); return; }
   if (message.type === 'theme' && ['light','dark'].includes(message.theme)) { document.documentElement.dataset.theme = message.theme; document.documentElement.style.colorScheme = message.theme; return; }
-  if (message.type === 'host-ui') { document.documentElement.classList.toggle('pdfreader-host-toolbar', message.enabled === true); window.dispatchEvent(new Event('resize')); return; }
+  if (message.type === 'host-ui') { app.secondaryToolbar?.close(); document.documentElement.classList.toggle('pdfreader-host-toolbar', message.enabled === true); window.dispatchEvent(new Event('resize')); return; }
   if (message.type === 'open') {
+    selectionMenu.close();
     documentId = message.documentId;
     activeDocument = null; selection = ''; selectionRaw = ''; selectionRects = []; selectionAnchor = '';
     outline = []; destinations = []; pageHasText = null; ++scanSequence;
@@ -190,8 +237,14 @@ window.addEventListener('message', event => {
           else if (action === 'select') app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: 0 });
           else if (action === 'thumbnails') app.viewsManager?.switchView(1, true);
           else if (action === 'hide-navigation') app.viewsManager?.close();
+          else if (action === 'undo' || action === 'redo') {
+            app.pdfViewer._layerProperties.annotationEditorUIManager?.[action]();
+            observe();
+          }
+          else if (action === 'underline' || action === 'strikeout' || action === 'highlight' && hasTextSelection(window.getSelection(), viewer)) {
+            addMarkup(action, 'pdfreader_toolbar');
+          }
           else {
-            const controls = { highlight: 'editorHighlightButton', text: 'editorFreeTextButton', ink: 'editorInkButton', select: 'editorNoneButton', tools: 'secondaryToolbarToggleButton' };
             const control = document.getElementById(controls[action]);
             if (!control) throw Error('此工具暂不可用');
             control.click();
@@ -211,11 +264,7 @@ window.addEventListener('message', event => {
           if (['auto','page-fit','page-width','page-actual'].includes(zoom) || /^\d+(\.\d+)?$/.test(zoom) && Number(zoom) >= 0.1 && Number(zoom) <= 10) app.pdfViewer.currentScaleValue = zoom;
           app.pdfViewer.currentPageNumber = page; publish(); reply(state());
         } else if (message.type === 'comment-selection') {
-          const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-          if (!manager?.hasCommentManager()) throw Error('当前文档的注释工具尚未准备好');
-          const current = window.getSelection();
-          if (!current?.anchorNode || current.isCollapsed || !document.getElementById('viewer').contains(current.anchorNode)) throw Error('请先在 PDF 中选中要注释的文字');
-          manager.commentSelection('pdfreader_toolbar');
+          commentSelection('pdfreader_toolbar');
           reply(true);
         } else if (message.type === 'show-comments') {
           app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: 16 });

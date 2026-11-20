@@ -56431,7 +56431,8 @@ class HighlightAnnotation extends MarkupAnnotation {
     } = annotation;
     const highlight = oldAnnotation || new Dict(xref);
     highlight.setIfNotExists("Type", Name.get("Annot"));
-    highlight.setIfNotExists("Subtype", Name.get("Highlight"));
+    const subtype = annotation.markup === "underline" ? "Underline" : annotation.markup === "strikeout" ? "StrikeOut" : "Highlight";
+    highlight.setIfNotExists("Subtype", Name.get(subtype));
     highlight.set(oldAnnotation ? "M" : "CreationDate", `D:${getModificationDate(date)}`);
     highlight.setIfArray("Rect", rect);
     highlight.setIfNotExists("F", 4);
@@ -56499,6 +56500,8 @@ class UnderlineAnnotation extends MarkupAnnotation {
       xref
     } = params;
     const quadPoints = this.data.quadPoints = getQuadPoints(dict, null);
+    this.data.isEditable = !!quadPoints && !this.data.noHTML;
+    this.data.opacity = dict.get("CA") ?? 1;
     if (quadPoints) {
       if (!this.appearance) {
         const strokeColor = getPdfColorArray(this.color, [0, 0, 0]);
@@ -56572,6 +56575,8 @@ class StrikeOutAnnotation extends MarkupAnnotation {
       xref
     } = params;
     const quadPoints = this.data.quadPoints = getQuadPoints(dict, null);
+    this.data.isEditable = !!quadPoints && !this.data.noHTML;
+    this.data.opacity = dict.get("CA") ?? 1;
     if (quadPoints) {
       if (!this.appearance) {
         const strokeColor = getPdfColorArray(this.color, [0, 0, 0]);
@@ -65479,3 +65484,5 @@ export { WorkerMessageHandler };
 
 //# sourceMappingURL=pdf.worker.mjs.map
 // PDFreader standalone notes patch
+
+// PDFreader text markup patch
