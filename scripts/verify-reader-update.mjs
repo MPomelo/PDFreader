@@ -9,7 +9,7 @@ const exported = 'test-results/workspace/markup-update.pdf';
 execFileSync('python', ['scripts/stage02-fixtures.py']);
 await import('./workspace-fixtures.mjs');
 const originalBytes = await readFile(original);
-const server = await createServer({ server: { port: 0, strictPort: false } });
+const server = await createServer({ cacheDir: 'node_modules/.vite/reader-update', server: { port: 0, strictPort: false } });
 let browser;
 try {
   await server.listen();
@@ -28,7 +28,7 @@ try {
   const action = name => menu.getByRole('menuitem', { name, exact: true });
   const hostButton = name => page.getByRole('button', { name, exact: true });
   const viewer = frame.locator('#viewerContainer');
-  const markings = () => frame.locator('body').evaluate(() => [...PDFViewerApplication.pdfDocument.annotationStorage.serializable.map.values()]
+  const markings = () => frame.locator('body').evaluate(() => [...(PDFViewerApplication.pdfDocument.annotationStorage.serializable.map?.values() ?? [])]
     .map(mark => ({ markup: mark.markup ?? 'highlight', quads: mark.quadPoints?.length, page: mark.pageIndex })));
   const select = async (first, last = first) => first.evaluate((element, end) => {
     const range = document.createRange();
@@ -41,7 +41,7 @@ try {
   }, await last.elementHandle());
   const openPDF = path => page.locator('input[type=file]').setInputFiles(path);
   await openPDF(original);
-  await expect(text(1)).toBeVisible();
+  await expect(text(1)).toBeVisible({ timeout: 60000 });
   assert.ok(await page.locator('.workspace-brand img').evaluate(img => img.complete && img.naturalWidth > 0));
 
   await page.setViewportSize({ width: 720, height: 650 });

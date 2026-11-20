@@ -203,6 +203,7 @@ window.addEventListener('message', event => {
     outline = []; destinations = []; pageHasText = null; ++scanSequence;
     snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
   } else if (message.documentId !== documentId) return;
+  if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); return; }
   queue = queue.catch(() => {}).then(async () => {
     if (message.documentId !== documentId) return;
     const reply = (result, transfer = []) => parent.postMessage({ channel: 'pdfreader', documentId: message.documentId,

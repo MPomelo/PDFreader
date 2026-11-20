@@ -43,15 +43,17 @@ patch('public/pdfjs/build/pdf.mjs', [
       const clipped = [];
       for (const range of ranges) {
         if (!range.intersectsNode(textLayer)) continue;
-        const part = document.createRange();
-        part.selectNodeContents(textLayer);
-        if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
-          part.setStart(range.startContainer, range.startOffset);
+        // Text nodes avoid duplicate span bounds and the selection sentinel at the page boundary.
+        const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!range.intersectsNode(node)) continue;
+          const part = document.createRange();
+          const start = range.startContainer === node ? range.startOffset : 0;
+          const end = range.endContainer === node ? range.endOffset : node.length;
+          part.setStart(node, start);
+          part.setEnd(node, end);
+          if (part.toString().trim()) clipped.push(part);
         }
-        if (range.compareBoundaryPoints(Range.END_TO_END, part) < 0) {
-          part.setEnd(range.endContainer, range.endOffset);
-        }
-        if (part.toString().trim()) clipped.push(part);
       }
       if (!clipped.length) continue;
       const layer = this.#getLayerForTextLayer(textLayer);

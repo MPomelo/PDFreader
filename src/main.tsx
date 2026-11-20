@@ -50,7 +50,16 @@ function App() {
   const layout: Layout = { left, right, reading, floating, leftWidth: preferredWidths.left, rightWidth: preferredWidths.right, theme };
   const layoutRef = useRef(layout); layoutRef.current = layout;
   function updateTabs(mutate: (previous: DocumentTab[]) => DocumentTab[]) { const next = mutate(tabsRef.current); tabsRef.current = next; setTabs(next); }
-  function activate(id: string, force = false) { if (exclusive.current && !force) return; if (id !== activeRef.current) dismissToolbarMenus(); activeRef.current = id; setActiveId(id); if (layoutRef.current.left) void panes.current.get(id)?.action('hide-navigation').catch(() => {}); }
+  function activate(id: string, force = false) {
+    if (exclusive.current && !force) return;
+    if (id !== activeRef.current) {
+      dismissToolbarMenus();
+      panes.current.get(activeRef.current)?.dismissSelectionMenu();
+    }
+    activeRef.current = id;
+    setActiveId(id);
+    if (layoutRef.current.left) void panes.current.get(id)?.action('hide-navigation').catch(() => {});
+  }
   function openSettings(section: SettingsSection = 'general') { dismissToolbarMenus(); setSettingsSection(section); setSettingsOpen(true); }
   function applyLayout(value: Layout) { setLeft(value.left); setRight(value.right); setReading(value.reading); setFloating(value.floating); setTheme(value.theme); setPreferredWidths({left: value.leftWidth, right: value.rightWidth}); }
   function resizePanel(side: 'left' | 'right', value: number) { setPreferredWidths(previous => ({ ...previous, [side]: Math.max(side === 'left' ? 160 : 280, Math.min(side === 'left' ? widths.leftMax : widths.rightMax, value)) })); }

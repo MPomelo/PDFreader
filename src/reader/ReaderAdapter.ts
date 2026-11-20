@@ -72,6 +72,7 @@ export class ReaderAdapter {
   markExported(token: string) { return this.request<ReaderState>('exported', { token }); }
   commentSelection() { return this.request<boolean>('comment-selection'); }
   showComments() { return this.request<boolean>('show-comments'); }
+  dismissSelectionMenu() { this.send('dismiss-selection-menu'); }
   navigate(index: number) { this.send('outline', { index }); }
   restore(page: number, zoom = 'auto') { return this.request<ReaderState>('restore', { page, zoom }); }
   setTheme(theme: 'light' | 'dark') { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'theme', theme }, location.origin); }); }
