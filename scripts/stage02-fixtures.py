@@ -72,6 +72,52 @@ for number in range(1, 3):
     page[NameObject('/Contents')] = layout._add_object(stream)
 layout.write(root / 'precise-selection.pdf')
 
+# Dense journal layout. The 12-point gutter is narrower than the old line-joining tolerance.
+journal = PdfWriter()
+page = journal.add_blank_page(width=612, height=792)
+font = DictionaryObject({NameObject('/Type'): NameObject('/Font'), NameObject('/Subtype'): NameObject('/Type1'), NameObject('/BaseFont'): NameObject('/Courier')})
+page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): journal._add_object(font)})})
+left = [(10, 28, 620 - index * 12, f'Near left row {index + 1:02d} samples only this paragraph text'[:46]) for index in range(10)]
+right = [(10, 316, 560 - index * 12, f'Near right row {index + 1:02d} belongs to distinct prose'[:46]) for index in range(7)]
+captions = [
+    (8.5, 316, 608, 'Fig. 1. An illustration and its explanation'),
+    (8.5, 316, 596, 'Caption continuation with a separate label.'),
+    (8.5, 316, 584, 'Final caption sentence for this diagram.'),
+]
+stream = DecodedStreamObject()
+stream.set_data(('0.85 g 316 622 264 38 re f 0 g\n' + ''.join(
+    f'BT /F1 {size} Tf {x} {y} Td ({text}) Tj ET\n'
+    for size, x, y, text in [(23, 30, 710, 'Journal title spans both columns here')] + list(reversed(right)) + left + captions
+)).encode())
+page[NameObject('/Contents')] = journal._add_object(stream)
+journal.write(root / 'narrow-columns.pdf')
+
+spacing = PdfWriter()
+courier = spacing._add_object(font)
+for page_width, gap in ((612, 3), (842, 4), (842, 6), (612, 18), (612, 48)):
+    page = spacing.add_blank_page(width=page_width, height=792)
+    page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): courier})})
+    left_rows = [f'Left gap {gap:02d} row {row + 1:02d} holds only this column prose'[:46] for row in range(10)]
+    right_rows = [f'Right gap {gap:02d} row {row + 1:02d} stays in independent prose'[:46] for row in range(10)]
+    rows = [(page_width / 2 + gap, 620 - row * 13 + row % 2 * 2, right_rows[row]) for row in reversed(range(10))]
+    rows += [(page_width / 2 - 46 * 6, 620 - row * 13, left_rows[row][:-8] if row in (2, 5) else left_rows[row]) for row in range(10)]
+    stream = DecodedStreamObject()
+    stream.set_data(''.join(f'BT /F1 10 Tf {x} {y} Td ({text}) Tj ET\n' for x, y, text in rows).encode())
+    page[NameObject('/Contents')] = spacing._add_object(stream)
+
+page = spacing.add_blank_page(width=612, height=792)
+bold = spacing._add_object(DictionaryObject({NameObject('/Type'): NameObject('/Font'),
+    NameObject('/Subtype'): NameObject('/Type1'), NameObject('/BaseFont'): NameObject('/Courier-Bold')}))
+page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): courier, NameObject('/F2'): bold})})
+before, after = 'Single column text continues into the', 'second half of the same line of prose'
+stream = DecodedStreamObject()
+stream.set_data(''.join(
+    f'BT /F1 10 Tf 64 {620 - row * 13} Td ({before}) Tj /F2 10 Tf {(len(before) + 1) * 6} 0 Td ({after}) Tj ET\n'
+    for row in range(8)
+).encode())
+page[NameObject('/Contents')] = spacing._add_object(stream)
+spacing.write(root / 'column-spacing.pdf')
+
 protected = PdfWriter(clone_from=PdfReader(root / 'reading.pdf'))
 protected.encrypt('stage02', algorithm='RC4-128')
 with (root / 'password.pdf').open('wb') as file:

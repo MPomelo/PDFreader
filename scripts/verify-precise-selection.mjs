@@ -47,7 +47,7 @@ try {
     await page.mouse.move(b.x, b.y, { steps: 12 });
     await expect(menu).toBeHidden();
     if (after) {
-      await expect(selection.locator(':scope > div')).toHaveCount(2);
+      await expect(selection.locator(':scope > div')).toHaveCount(after.rects ?? 2);
       await page.mouse.move(after.x, after.y);
     }
     await page.mouse.up();
@@ -62,6 +62,82 @@ try {
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
   }
 
+  await page.locator('input[type=file]').setInputFiles('test-results/stage02/narrow-columns.pdf');
+  const narrowLeft = index => line(new RegExp(`^Near left row ${String(index).padStart(2, '0')}`));
+  await expect(narrowLeft(1)).toBeVisible({ timeout: 60000 });
+  await page.getByRole('combobox', { name: '缩放', exact: true }).selectOption('page-fit');
+  await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue)).toBe('page-fit');
+  const leftRows = [];
+  for (let index = 1; index <= 10; index++) leftRows.push((await narrowLeft(index).textContent()).trimEnd());
+  await drag(narrowLeft(1), 5, narrowLeft(7), 20);
+  const onlyLeft = [leftRows[0].slice(5), ...leftRows.slice(1, 6), leftRows[6].slice(0, 20)].join('\n');
+  const rightEdges = await selection.locator(':scope > div').evaluateAll(boxes => boxes.map(box =>
+    parseFloat(box.style.left) + parseFloat(box.style.width)));
+  assert.equal(rightEdges.length, 7);
+  assert.ok(rightEdges.every(edge => edge < 100 * 316 / 612));
+  await action('复制').click();
+  await clipboard(onlyLeft);
+
+  const narrowRight1 = line(/^Near right row 01/), narrowRight2 = line(/^Near right row 02/);
+  const nearLeftEdge = await point(narrowLeft(7), leftRows[6].length);
+  const nearRightEdge = await point(narrowRight2, 0);
+  await drag(narrowLeft(7), 20, narrowLeft(1), 5);
+  await action('复制').click();
+  await clipboard(onlyLeft);
+  await drag(narrowLeft(1), 5, narrowLeft(7), 20, { x: (nearLeftEdge.x + nearRightEdge.x) / 2, y: nearRightEdge.y, rects: 7 });
+  await action('复制').click();
+  await clipboard(onlyLeft);
+
+  const narrowCaption = line(/^Fig\.$/), captionSecond = line(/^continuation$/);
+  const overCaption = await point(line(/^illustration$/), 6);
+  await drag(narrowLeft(1), 5, narrowLeft(7), 20, { ...overCaption, rects: 7 });
+  await action('复制').click();
+  await clipboard(onlyLeft);
+  await drag(narrowCaption, 0, captionSecond, 'continuation'.length);
+  await expect(narrowCaption).toHaveAttribute('data-pdfreader-block', 'figure-caption');
+  await expect(captionSecond).toHaveAttribute('data-pdfreader-block', 'figure-caption');
+  await action('复制').click();
+  await clipboard('Fig. 1. An illustration and its explanation\nCaption continuation');
+
+  await drag(narrowLeft(9), 8, narrowRight2, 19);
+  await action('复制').click();
+  await clipboard([leftRows[8].slice(8), leftRows[9], (await narrowRight1.textContent()).trimEnd(),
+    (await narrowRight2.textContent()).slice(0, 19)].join('\n'));
+
+  await drag(line(/^Journal title$/), 8, line(/^here$/), 2);
+  await action('复制').click();
+  await clipboard('title spans both columns he');
+
+  await page.locator('input[type=file]').setInputFiles('test-results/stage02/column-spacing.pdf');
+  const numberField = page.getByRole('textbox', { name: '页码' });
+  async function goTo(pageNumber) {
+    await numberField.fill(String(pageNumber));
+    await numberField.press('Enter');
+    await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.currentPageNumber)).toBe(pageNumber);
+  }
+  await expect(line(/^Left gap 03 row 01/)).toBeVisible({ timeout: 60000 });
+  await page.getByRole('combobox', { name: '缩放', exact: true }).selectOption('page-fit');
+  await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue)).toBe('page-fit');
+  for (const [pageIndex, gap] of [3, 4, 6, 18, 48].entries()) {
+    const number = pageIndex + 1;
+    if (pageIndex > 0) await goTo(number);
+    const leftOnPage = row => line(new RegExp(`^Left gap ${String(gap).padStart(2, '0')} row 0${row}`), number);
+    await expect(leftOnPage(1)).toBeVisible();
+    const lineTexts = [];
+    for (let row = 1; row <= 5; row++) lineTexts.push((await leftOnPage(row).textContent()).trimEnd());
+    await drag(leftOnPage(1), 5, leftOnPage(5), 22);
+    await action('复制').click();
+    await clipboard([lineTexts[0].slice(5), ...lineTexts.slice(1, 4), lineTexts[4].slice(0, 22)].join('\n'));
+  }
+  await goTo(6);
+  const firstPhrase = line(/^Single column text continues into the/, 6);
+  const secondPhrase = line(/^second half of the same line of prose/, 6);
+  await drag(firstPhrase.first(), 0, secondPhrase.nth(2), 'second half'.length);
+  await action('复制').click();
+  await clipboard('Single column text continues into the second half of the same line of prose\n'.repeat(2) +
+    'Single column text continues into the second half');
+
+  await page.getByRole('tab', { name: 'precise-selection.pdf' }).click();
   await expect(leftFirst).toBeVisible({ timeout: 60000 });
   await button('上一页').waitFor();
   await page.getByRole('combobox', { name: '缩放', exact: true }).selectOption('page-fit');
@@ -263,7 +339,7 @@ assert all(abs(a-b) < 0.8 for a, b in zip(marks[0]['/QuadPoints'], marks[1]['/Qu
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
   assert.deepEqual(errors, []);
-  console.log('Verified selection toolbar, cross-column selection and rotated PDF markup, four citation formats, and persisted system appearance.');
+  console.log('Verified narrow column drags, caption isolation, intentional column changes, rotated markup, citations, and appearance.');
 } finally {
   await browser?.close();
   await server.close();

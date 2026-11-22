@@ -202,9 +202,9 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
       items.push({ ...box, box, boxes, span, text, block, dir: span.dir, index });
     }
     if (!items.length) return cached;
-    const lines = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line));
+    const { lines, gutter } = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line));
     for (const line of lines) for (const run of line.items) run.span.dataset.pdfreaderBlock = line.kind;
-    const model = { page, layer, version: metadataVersion, rotation, width: parent.width, height: parent.height, lines };
+    const model = { page, layer, version: metadataVersion, rotation, width: parent.width, height: parent.height, lines, gutter };
     models.delete(page);
     models.set(page, model);
     if (models.size > 32) models.delete(models.keys().next().value);
@@ -219,12 +219,17 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
     const model = drag?.models.get(page) || modelFor(page, layer);
     if (!model) return null;
     const { parent, rotation, x, y } = getPosition(layer, clientX, clientY);
+    const startColumn = drag?.anchor.model.page === page ? drag.anchor.line.column : null;
+    const inGutter = model.gutter && x > model.gutter.left && x < model.gutter.right;
     let best = null, distance = Infinity;
     for (let lineIndex = 0; lineIndex < model.lines.length; lineIndex++) {
       const line = model.lines[lineIndex];
       const dx = Math.max(line.x - x, 0, x - line.x - line.width);
       const dy = Math.max(line.y - y, 0, y - line.y - line.height);
       if (dy > line.height * (exact ? 0.12 : 0.45) || dx > (exact ? 0.003 : 0.018)) continue;
+      const crossesColumn = startColumn && line.column && startColumn !== line.column;
+      if ((inGutter || crossesColumn) && !line.items.some(run => run.text.trim() && run.boxes.some(box =>
+        x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height))) continue;
       const rank = (dx * parent.width) ** 2 + (dy * parent.height) ** 2 +
         0.005 * ((line.y + line.height / 2 - y) * parent.height) ** 2;
       if (rank < distance) {
@@ -249,6 +254,8 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
     const difference = a.reduce((order, value, index) => order || value - b[index], 0);
     if (!difference) return null;
     const [start, end] = difference < 0 ? [anchor, focus] : [focus, anchor];
+    const ancillary = isAncillary(anchor.line.kind);
+    const column = !ancillary && start.model.page === end.model.page && start.line.column === end.line.column ? start.line.column : null;
     const groups = [];
     for (let page = start.model.page; page <= end.model.page; page++) {
       const model = drag.models.get(page) || modelFor(page);
@@ -259,9 +266,9 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
       const boxes = [], lines = [], kinds = new Set(), anchors = [];
       for (let row = from; row <= to; row++) {
         const line = model.lines[row];
-        if (isAncillary(anchor.line.kind)) {
+        if (ancillary) {
           if ((line.block || line) !== (anchor.line.block || anchor.line)) continue;
-        } else if (isAncillary(line.kind) && line !== focus.line) continue;
+        } else if (isAncillary(line.kind) || column && line.column !== column) continue;
         const first = line === start.line ? start.runIndex : 0;
         const last = line === end.line ? end.runIndex : line.items.length - 1;
         const parts = [];
@@ -294,8 +301,8 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
   function update(clientX, clientY) {
     const hovered = hit(clientX, clientY);
     if (!hovered) return false;
-    if (isAncillary(drag.anchor.line.kind) &&
-        (hovered.line.block || hovered.line) !== (drag.anchor.line.block || drag.anchor.line)) return false;
+    const anchor = drag.anchor.line;
+    if (isAncillary(anchor.kind) ? (hovered.line.block || hovered.line) !== (anchor.block || anchor) : isAncillary(hovered.line.kind)) return false;
     drag.models.set(hovered.model.page, hovered.model);
     const result = collect(drag.anchor, hovered);
     if (result === undefined) return false;

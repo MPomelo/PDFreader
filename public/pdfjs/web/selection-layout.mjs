@@ -40,15 +40,75 @@ function median(values) {
   return sorted[Math.floor(sorted.length / 2)] || 0.018;
 }
 
-function getLines(items) {
+function getRows(items, tolerance = 0.44) {
   const rows = [];
   const center = item => item.y + item.height / 2;
   for (const item of [...items].sort((a, b) => center(a) - center(b) || a.x - b.x)) {
     const row = rows.at(-1);
-    if (row && Math.abs(center(item) - center(row[0])) <= Math.max(item.height, row[0].height) * 0.44) row.push(item);
+    if (row && Math.abs(center(item) - center(row[0])) <= Math.max(item.height, row[0].height) * tolerance) row.push(item);
     else rows.push([item]);
   }
+  for (const row of rows) row.sort((a, b) => a.x - b.x);
+  return rows;
+}
 
+function findGutter(items) {
+  const ink = items.filter(item => item.text.trim() && !pageEdge(item));
+  // As in Recursive XY Cut, measure spaces against local characters. Look for
+  // a common whitespace strip down multiple baselines before joining any lines.
+  const advance = runs => median(runs.map(run => run.width / run.text.trimEnd().length));
+  const alignment = Math.max(0.0015, advance(ink) * 0.65);
+  const candidates = new Map(), rows = [];
+  for (const row of getRows(ink, 0.68)) {
+    const start = row[0].x;
+    const end = Math.max(...row.map(item => item.x + item.width));
+    const y = median(row.map(item => item.y + item.height / 2));
+    const height = median(row.map(item => item.height));
+    const glyph = advance(row);
+    rows.push({ start, end, y });
+    let left = start;
+    for (const item of row) {
+      const right = item.x;
+      const middle = (left + right) / 2;
+      if (right - left >= Math.max(0.001, glyph * 0.26) && left - start >= 0.10 && end - right >= 0.10 && middle > 0.24 && middle < 0.76) {
+        const key = Math.round(right / alignment);
+        if (!candidates.has(key)) candidates.set(key, []);
+        candidates.get(key).push({ left, right, y, height, glyph });
+      }
+      left = Math.max(left, item.x + item.width);
+    }
+  }
+  let best = null;
+  for (const pairs of candidates.values()) {
+    const left = Math.max(...pairs.map(pair => pair.left));
+    const right = Math.min(...pairs.map(pair => pair.right));
+    const split = (left + right) / 2;
+    const height = median(pairs.map(pair => pair.height));
+    const glyph = median(pairs.map(pair => pair.glyph));
+    const width = right - left;
+    if (width < Math.max(0.001, glyph * 0.18)) continue;
+    const top = Math.min(...pairs.map(pair => pair.y)) - height * 1.5;
+    const bottom = Math.max(...pairs.map(pair => pair.y)) + height * 1.5;
+    const nearby = rows.filter(row => row.y >= top && row.y <= bottom);
+    const straddlingRows = nearby.filter(row => split - row.start >= 0.10 && row.end - split >= 0.10).length;
+    const narrow = width <= glyph * 1.5;
+    if (pairs.length < Math.max(narrow ? 4 : 2, Math.ceil(straddlingRows * (narrow ? 0.60 : 0.38)))) continue;
+    if (narrow) {
+      // A word gap can also line up. Require evidence that one column ends or
+      // wraps independently when the whitespace is only about a glyph wide.
+      const leftEdges = pairs.map(pair => pair.left).sort((a, b) => a - b);
+      const unevenEnds = left - leftEdges[1] >= glyph;
+      const separateRows = nearby.filter(row => row.end <= split || row.start >= split).length;
+      if (!unevenEnds && separateRows < 2) continue;
+    }
+    if (!best || pairs.length > best.count || (pairs.length === best.count && Math.abs(split - 0.5) < Math.abs(best.split - 0.5))) {
+      best = { left, right, split, top, bottom, height, count: pairs.length };
+    }
+  }
+  return best;
+}
+
+function getLines(rows, gutter = null) {
   const lines = [];
   function finish(parts) {
     if (!parts.length) return;
@@ -61,10 +121,17 @@ function getLines(items) {
     lines.push({ items: parts, x, y, width: right - x, height: bottom - y, fontHeight: median(parts.map(part => part.height)), rtl });
   }
   for (const row of rows) {
-    row.sort((a, b) => a.x - b.x);
+    const rowCenter = row[0].y + row[0].height / 2;
+    const inColumnBand = gutter && rowCenter >= gutter.top && rowCenter <= gutter.bottom;
     let parts = [], right = -1;
     for (const item of row) {
-      if (item.x - right > Math.max(0.023, item.height * 1.8)) {
+      const spansGutter = inColumnBand && item.x < gutter.right && item.x + item.width > gutter.left;
+      if (spansGutter && !item.text.trim()) continue;
+      const gap = item.x - right;
+      const crossesGutter = inColumnBand && right <= gutter.split && item.x >= gutter.split &&
+        gap >= (gutter.right - gutter.left) * 0.65 && Math.abs(item.x - gutter.right) <= 0.035 &&
+        !(parts[0]?.height > gutter.height * 1.45 && item.height > gutter.height * 1.45);
+      if (gap > Math.max(0.023, item.height * 1.8) || crossesGutter) {
         finish(parts);
         parts = [];
         right = -1;
@@ -96,42 +163,20 @@ function lineKind(line, text, bodyHeight) {
   return 'body';
 }
 
-function readingOrder(lines) {
+function readingOrder(lines, gutter) {
   const visual = [...lines].sort((a, b) => a.y - b.y || a.x - b.x);
+  if (!gutter) return visual;
   const body = visual.filter(line => !isAncillary(line.kind));
-  const gaps = new Set();
-  for (let i = 0; i < body.length; i++) {
-    const a = body[i];
-    for (const b of body.slice(i + 1, i + 7)) {
-      if (b.y - a.y > 3 * Math.max(a.height, b.height)) break;
-      const [left, right] = a.x < b.x ? [a, b] : [b, a];
-      const edge = left.x + left.width;
-      if (right.x - edge >= 0.045 && right.x - left.x >= 0.22) {
-        const middle = (edge + right.x) / 2;
-        if (middle > 0.24 && middle < 0.76) gaps.add(Math.round(middle * 100) / 100);
-      }
-    }
-  }
-  let best = null;
-  for (const gap of gaps) {
-    const left = body.filter(line => line.x + line.width < gap);
-    const right = body.filter(line => line.x > gap);
-    if (!left.length || !right.length) continue;
-    const score = Math.min(left.length, right.length) * 3 - (body.length - left.length - right.length);
-    if (score > 0 && (!best || score > best.score || score === best.score && Math.abs(gap - 0.5) < Math.abs(best.gap - 0.5))) {
-      best = { gap, score };
-    }
-  }
-  if (!best) return visual;
+  const rtl = body.filter(line => line.rtl).length > body.length / 2;
   const order = [], left = [], right = [];
   function flush() {
-    if (body.filter(line => line.rtl).length > body.length / 2) order.push(...right, ...left);
+    if (rtl) order.push(...right, ...left);
     else order.push(...left, ...right);
     left.length = right.length = 0;
   }
   for (const line of visual) {
-    if (line.x + line.width < best.gap) left.push(line);
-    else if (line.x > best.gap) right.push(line);
+    if (line.column === 'left') left.push(line);
+    else if (line.column === 'right') right.push(line);
     else {
       if (!isAncillary(line.kind)) flush();
       order.push(line);
@@ -147,9 +192,11 @@ function readingOrder(lines) {
 }
 
 export function layoutLines(items, repeated = () => false) {
-  const lines = getLines(items);
+  const gutter = findGutter(items);
+  const lines = getLines(getRows(items), gutter);
   const entries = lines.map(line => {
     line.block = line.items.find(item => item.block)?.block;
+    line.column = !gutter ? null : line.x + line.width <= gutter.split ? 'left' : line.x >= gutter.split ? 'right' : null;
     return { line, text: lineText(line.items).trim() };
   });
   const bodyHeight = median(entries.filter(({ line, text }) => !pageEdge(line) && line.y < 0.69 &&
@@ -163,7 +210,7 @@ export function layoutLines(items, repeated = () => false) {
   // Wrapped captions/notes keep their role when they share the small type and line spacing.
   const flowing = [];
   for (const line of [...lines].sort((a, b) => a.y - b.y)) {
-    const previous = flowing.findLast(other => Math.abs(other.x - line.x) <= 0.022 &&
+    const previous = flowing.findLast(other => other.column === line.column && Math.abs(other.x - line.x) <= 0.022 &&
       line.y - other.y > other.height * 0.65 && line.y - other.y < other.height * 1.7);
     if (line.kind === 'body' && previous && /caption|footnote/.test(previous.kind) &&
         line.fontHeight < bodyHeight * 0.93 && Math.abs(line.fontHeight - previous.fontHeight) < previous.fontHeight * 0.15) {
@@ -172,11 +219,11 @@ export function layoutLines(items, repeated = () => false) {
     }
     flowing.push(line);
   }
-  return readingOrder(lines);
+  return { lines: readingOrder(lines, gutter), gutter };
 }
 
 export function edgeSignatures(items) {
-  return getLines(items).flatMap(line => {
+  return getLines(getRows(items)).flatMap(line => {
     const edge = pageEdge(line);
     const text = runningText(lineText(line.items));
     return edge && text.length > 3 ? [{ edge, text, x: line.x, y: line.y }] : [];

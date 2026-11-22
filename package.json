@@ -1,6 +1,6 @@
 {
   "name": "pdfreader",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "overrides": {
     "katex": "0.19.1"
@@ -15,7 +15,7 @@
     "desktop:build": "node scripts/desktop.mjs build",
     "test:smoke": "node scripts/smoke.mjs",
     "test:selection": "node --test scripts/test-selection.mjs",
-    "test:stage02": "node --test scripts/test-selection.mjs scripts/test-stage02.mjs",
+    "test:stage02": "node --test scripts/test-selection.mjs scripts/test-selection-layout.mjs scripts/test-stage02.mjs",
     "test:stage03": "node --test scripts/test-stage03.mjs",
     "test:stage04": "node --test scripts/test-stage04.mjs",
     "test:native": "node scripts/desktop.mjs test",
