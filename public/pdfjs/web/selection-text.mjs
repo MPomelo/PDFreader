@@ -1,9 +1,13 @@
+const ligatures = { '\uFB00': 'ff', '\uFB01': 'fi', '\uFB02': 'fl', '\uFB03': 'ffi', '\uFB04': 'ffl', '\uFB05': 'st', '\uFB06': 'st' };
+
+export function expandLigatures(text) {
+  return text.replace(/[\uFB00-\uFB06]/g, character => ligatures[character]);
+}
+
 // Clean PDF layout whitespace without applying NFKC to mathematical notation.
 // Blank lines remain paragraph boundaries; single line breaks are layout wraps.
 export function normalizeSelectionText(text) {
-  const ligatures = { '\uFB00': 'ff', '\uFB01': 'fi', '\uFB02': 'fl', '\uFB03': 'ffi', '\uFB04': 'ffl', '\uFB05': 'st', '\uFB06': 'st' };
-  return text
-    .replace(/[\uFB00-\uFB06]/g, character => ligatures[character])
+  return expandLigatures(text)
     .replace(/\r\n?/g, '\n')
     // A discretionary hyphen is not part of the word, including at a wrap.
     .replace(/\u00AD[\t \u00A0]*\n[\t \u00A0]*(?=\S)/g, '')

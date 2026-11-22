@@ -16,16 +16,24 @@ patch('public/pdfjs/build/pdf.mjs', [
   ['      freetext: "pdfjs-editor-remove-freetext-button",', '      comment: "pdfjs-editor-delete-comment-popup-button",\n      freetext: "pdfjs-editor-remove-freetext-button",'],
   ['const isNoneMode = this.#mode === AnnotationEditorType.NONE;', 'const isNoneMode = this.#mode !== AnnotationEditorType.HIGHLIGHT;'],
   ['if (this.#mode !== AnnotationEditorType.HIGHLIGHT && this.#mode !== AnnotationEditorType.NONE) {', 'if (![AnnotationEditorType.HIGHLIGHT, AnnotationEditorType.NONE, AnnotationEditorType.POPUP, AnnotationEditorType.COMMENT].includes(this.#mode)) {'],
-  ['  commentSelection(methodOfCreation = "") {\n    this.highlightSelection(methodOfCreation, true);\n  }', `  commentSelection(methodOfCreation = "") {
+  ['  commentSelection(methodOfCreation = "") {\n    this.highlightSelection(methodOfCreation, true);\n  }', `  commentSelection(methodOfCreation = "", group = null) {
     const selection = document.getSelection();
-    if (!selection || selection.isCollapsed) return;
-    const textLayer = this.#getAnchorElementForSelection(selection)?.closest(".textLayer");
-    if (!textLayer) return;
-    const boxes = this.getSelectionBoxes(textLayer);
-    const layer = this.#getLayerForTextLayer(textLayer);
-    if (!boxes?.length || !layer) return;
-    const anchor = { ...boxes[0], text: selection.toString() };
-    selection.removeAllRanges();
+    let layer, boxes, text;
+    if (group) {
+      layer = this.getLayer(group.page - 1);
+      boxes = group.boxes;
+      text = group.text;
+    } else {
+      if (!selection || selection.isCollapsed) return false;
+      const textLayer = this.#getAnchorElementForSelection(selection)?.closest(".textLayer");
+      if (!textLayer) return false;
+      layer = this.#getLayerForTextLayer(textLayer);
+      boxes = this.getSelectionBoxes(textLayer);
+      text = selection.toString();
+    }
+    if (!layer || !boxes?.length) return false;
+    const anchor = { ...boxes[0], text };
+    selection?.removeAllRanges();
     const create = () => {
       const editor = new NoteEditor({ parent: layer, id: this.getId(),
         uiManager: this, x: 0, y: 0, anchor });
@@ -42,6 +50,7 @@ patch('public/pdfjs/build/pdf.mjs', [
         source: this, mode: AnnotationEditorType.POPUP
       });
     }
+    return true;
   }`],
   ['new Set(this.#editorTypes.map(editorClass => editorClass._editorType))', 'new Set([AnnotationType.TEXT, ...this.#editorTypes.map(editorClass => editorClass._editorType)])'],
   ['class FakeEditor extends AnnotationEditor {', 'const NoteEditor = createNoteEditor(AnnotationEditor);\n\nclass FakeEditor extends AnnotationEditor {'],

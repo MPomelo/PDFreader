@@ -24,8 +24,8 @@ try {
   await page.goto(url + 'test-results/workspace/app.html');
   const frame = page.frameLocator('.document-pane[data-active=true] iframe');
   const text = (number, index = 0) => frame.locator('.page[data-page-number="' + number + '"] .textLayer span[dir]').nth(index);
-  const menu = frame.getByRole('menu', { name: '选区操作' });
-  const action = name => menu.getByRole('menuitem', { name, exact: true });
+  const menu = frame.getByRole('toolbar', { name: '选区操作' });
+  const action = name => menu.getByRole('button', { name, exact: true });
   const hostButton = name => page.getByRole('button', { name, exact: true });
   const viewer = frame.locator('#viewerContainer');
   const markings = () => frame.locator('body').evaluate(() => [...(PDFViewerApplication.pdfDocument.annotationStorage.serializable.map?.values() ?? [])]
@@ -74,7 +74,7 @@ try {
   await expect(menu).toBeHidden();
   const copied = await select(text(1));
   await text(1).click({ button: 'right' });
-  assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['复制', '高亮', '下划线', '删除线', '写注释', '翻译']);
+  assert.deepEqual(await menu.getByRole('button').allTextContents(), ['复制', '高亮', '下划线', '删除线', '写注释', '翻译', '引文']);
   await action('复制').click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(copied);
   await expect(menu).toBeHidden();
@@ -107,7 +107,10 @@ try {
   await frame.locator('body').evaluate(() => { PDFViewerApplication.pdfViewer.currentScaleValue = '0.55'; });
   await expect(text(2)).toBeVisible();
   await select(text(1, 1), text(2));
-  await expect(page.locator('.selection-actions')).toBeVisible();
+  await viewer.press('Shift+F10');
+  await expect(menu).toBeVisible();
+  await viewer.press('Escape');
+  await expect(menu).toBeHidden();
   await hostButton('批注工具').click();
   await hostButton('删除线').click();
   await expect.poll(markings).toEqual([

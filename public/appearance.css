@@ -1,0 +1,13 @@
+:root, [data-accent=blue] { --accent-light: #0f6cbd; --accent-dark: #79bdff; --accent-solid: #0f6cbd; }
+[data-accent=teal] { --accent-light: #087766; --accent-dark: #61dac2; --accent-solid: #087766; }
+[data-accent=violet] { --accent-light: #6842b5; --accent-dark: #c5acff; --accent-solid: #6842b5; }
+[data-accent=rose] { --accent-light: #a73562; --accent-dark: #ffa3c4; --accent-solid: #a73562; }
+[data-accent=amber] { --accent-light: #895103; --accent-dark: #f7c365; --accent-solid: #895103; }
+
+:root {
+  --accent: light-dark(var(--accent-light), var(--accent-dark));
+  --focus: var(--accent);
+  --selected: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-selection: color-mix(in srgb, var(--accent) 32%, transparent);
+  accent-color: var(--accent);
+}

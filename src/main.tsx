@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Add20Regular, DocumentPdf20Regular, Dismiss20Regular, FolderOpen20Regular, Translate20Regular } from '@fluentui/react-icons';
+import { Add20Regular, DocumentPdf20Regular, Dismiss20Regular, FolderOpen20Regular } from '@fluentui/react-icons';
 import { ReaderAdapter, type ReaderEvent, type ReaderState, type ReaderAction } from './reader/ReaderAdapter';
 import { DocumentPane, type DocumentTab } from './reader/DocumentPane';
 import { adjacentTabId, shortcutTabId } from './reader/tabs';
@@ -15,11 +15,14 @@ import { DEFAULT_WIDTHS, WIDTHS_KEY, panelLayout, parseWidths } from './ui/panel
 import { SettingsDialog, type SettingsSection } from './ui/SettingsDialog';
 import { DocumentToolbar } from './ui/DocumentToolbar';
 import { WindowControls } from './ui/WindowControls';
+import { DEFAULT_ACCENT, type Accent, type ColorScheme, type ThemeMode } from './ui/appearance';
+import { CitationDialog } from './citation/CitationDialog';
 import './ui/styles.css';
 import './ui/stage05.css';
 import './ui/workspace.css';
 
 const brandIcon = new URL('../src-tauri/icons/app-icon.svg', import.meta.url).href;
+const systemColorScheme = window.matchMedia('(prefers-color-scheme: dark)');
 
 function dismissToolbarMenus() {
   document.querySelectorAll('.toolbar-menu[open]').forEach(menu => menu.removeAttribute('open'));
@@ -36,18 +39,23 @@ function App() {
   const [operation, setOperation] = useState(''), exclusive = useRef(false), openQueue = useRef(Promise.resolve());
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [left, setLeft] = useState(false), [right, setRight] = useState(false), [reading, setReading] = useState(false), [floating, setFloating] = useState(false);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<ThemeMode>('system');
+  const [systemTheme, setSystemTheme] = useState<ColorScheme>(() => systemColorScheme.matches ? 'dark' : 'light');
+  const [accent, setAccent] = useState<Accent>(DEFAULT_ACCENT);
+  const colorScheme = theme === 'system' ? systemTheme : theme;
   const [library, setLibrary] = useState(repository.snapshot), [localReady, setLocalReady] = useState(false);
   const booted = useRef(false);
   const [preferences, setPreferences] = useState<ReaderPreferences>(DEFAULT_READER_PREFERENCES), prefsRef = useRef(preferences); prefsRef.current = preferences;
   const [automatic, setAutomatic] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false), [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
+  const [citationId, setCitationId] = useState('');
   const [signals, setSignals] = useState<Record<string,number>>({});
   const [dragging, setDragging] = useState(false), [viewport, setViewport] = useState(window.innerWidth);
   const [preferredWidths, setPreferredWidths] = useState(() => { try { return parseWidths(localStorage.getItem(WIDTHS_KEY)); } catch { return DEFAULT_WIDTHS; } });
   const active = tabs.find(tab => tab.id === activeId) || null, reader = active?.state || null;
+  const citationTab = tabs.find(tab => tab.id === citationId), citationAdapter = panes.current.get(citationId);
   const widths = panelLayout(preferredWidths, viewport, left && !reading, right && !reading && !floating);
-  const layout: Layout = { left, right, reading, floating, leftWidth: preferredWidths.left, rightWidth: preferredWidths.right, theme };
+  const layout: Layout = { left, right, reading, floating, leftWidth: preferredWidths.left, rightWidth: preferredWidths.right, theme, accent };
   const layoutRef = useRef(layout); layoutRef.current = layout;
   function updateTabs(mutate: (previous: DocumentTab[]) => DocumentTab[]) { const next = mutate(tabsRef.current); tabsRef.current = next; setTabs(next); }
   function activate(id: string, force = false) {
@@ -60,8 +68,12 @@ function App() {
     setActiveId(id);
     if (layoutRef.current.left) void panes.current.get(id)?.action('hide-navigation').catch(() => {});
   }
-  function openSettings(section: SettingsSection = 'general') { dismissToolbarMenus(); setSettingsSection(section); setSettingsOpen(true); }
-  function applyLayout(value: Layout) { setLeft(value.left); setRight(value.right); setReading(value.reading); setFloating(value.floating); setTheme(value.theme); setPreferredWidths({left: value.leftWidth, right: value.rightWidth}); }
+  function openSettings(section: SettingsSection = 'general') { dismissToolbarMenus(); panes.current.get(activeRef.current)?.dismissSelectionMenu(); setSettingsSection(section); setSettingsOpen(true); }
+  function openCitation(id = activeRef.current) {
+    if (exclusive.current || modalRef.current || !panes.current.get(id)?.hasDocument) return;
+    dismissToolbarMenus(); panes.current.get(id)?.dismissSelectionMenu(); setCitationId(id);
+  }
+  function applyLayout(value: Layout) { setLeft(value.left); setRight(value.right); setReading(value.reading); setFloating(value.floating); setTheme(value.theme); setAccent(value.accent ?? DEFAULT_ACCENT); setPreferredWidths({left: value.leftWidth, right: value.rightWidth}); }
   function resizePanel(side: 'left' | 'right', value: number) { setPreferredWidths(previous => ({ ...previous, [side]: Math.max(side === 'left' ? 160 : 280, Math.min(side === 'left' ? widths.leftMax : widths.rightMax, value)) })); }
   async function changePreferences(value: ReaderPreferences) { setPreferences(value); prefsRef.current = value; try { await repository.savePreferences(value); } catch (error) { setError(String(error)); } }
   async function persist(tab: DocumentTab) { if (tab.state) await repository.progress({ fingerprint: tab.fingerprint, name: tab.name, path: tab.path, page: tab.state.page, zoom: tab.state.zoom || 'auto', time: new Date().toISOString() }); }
@@ -157,17 +169,24 @@ function App() {
       if (event.type==='dismiss-menus') dismissToolbarMenus();
       if (event.type==='translate-selection' && !exclusive.current && !modalRef.current) translateFloating(id);
       if (event.type==='selection-copied') setNotice('已复制选区');
+      if (event.type==='cite-document') openCitation(id);
     }
   }
   function translateFloating(id = activeRef.current) { if(!id)return;setReading(false);setFloating(true);setRight(true);setSignals(previous=>({...previous,[id]:(previous[id]||0)+1})); }
   const handlers = useRef({choose,closeWindow,closeTab,exportTab,openPaths}); handlers.current={choose,closeWindow,closeTab,exportTab,openPaths};
-  const modalRef=useRef(false);modalRef.current=settingsOpen||!!prompt;
+  const modalRef=useRef(false);modalRef.current=settingsOpen||!!prompt||!!citationTab;
   useEffect(()=>repository.subscribe(()=>setLibrary(repository.snapshot)),[]);
   useEffect(()=>{const resize=()=>setViewport(window.innerWidth);window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
-  useEffect(()=>{document.documentElement.dataset.theme=theme;document.documentElement.style.colorScheme=theme;},[theme]);
+  useEffect(() => {
+    const change = () => setSystemTheme(systemColorScheme.matches ? 'dark' : 'light');
+    systemColorScheme.addEventListener('change', change);
+    change();
+    return () => systemColorScheme.removeEventListener('change', change);
+  }, []);
+  useEffect(() => { document.documentElement.dataset.theme = colorScheme; document.documentElement.dataset.accent = accent; }, [colorScheme, accent]);
   useEffect(()=>{if(!notice)return;const timer=setTimeout(()=>setNotice(''),4500);return()=>clearTimeout(timer);},[notice]);
   useEffect(()=>{try{localStorage.setItem(WIDTHS_KEY,JSON.stringify(preferredWidths));}catch{}},[preferredWidths]);
-  useEffect(()=>{if(!localReady)return;const timer=setTimeout(()=>{void repository.saveLayout(layoutRef.current).catch(()=>{});},400);return()=>clearTimeout(timer);},[localReady,left,right,reading,floating,preferredWidths.left,preferredWidths.right,theme]);
+  useEffect(()=>{if(!localReady)return;const timer=setTimeout(()=>{void repository.saveLayout(layoutRef.current).catch(()=>{});},400);return()=>clearTimeout(timer);},[localReady,left,right,reading,floating,preferredWidths.left,preferredWidths.right,theme,accent]);
   useEffect(()=>{if(prompt&&!dialog.current?.open)dialog.current?.showModal();if(!prompt&&dialog.current?.open)dialog.current?.close();},[prompt]);
   useEffect(()=>{
     let disposed=false;const releases:(()=>void)[]=[];
@@ -194,20 +213,20 @@ function App() {
   },[]);
   return <div className={'app workspace'+(reading?' reading-mode':'')} onDragOver={event=>{event.preventDefault();setDragging(true);}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setDragging(false);}} onDrop={event=>{event.preventDefault();setDragging(false);if(!isTauri())void fileOpen([...event.dataTransfer.files]);}}>
     <div className="workspace-tabs"><div className="workspace-brand" data-tauri-drag-region><img src={brandIcon} width={24} height={24} alt="" /><strong>PDFreader</strong></div><div className="document-tabs" role="tablist" aria-label="PDF 文档">{tabs.map(tab=><div className={'document-tab'+(tab.id===activeId?' selected':'')} key={tab.id}><button id={'document-tab-'+tab.id} role="tab" aria-label={tab.name} aria-controls={'document-pane-'+tab.id} aria-selected={tab.id===activeId} tabIndex={tab.id===activeId?0:-1} title={tab.path||tab.name} onClick={()=>activate(tab.id)} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const ids=tabsRef.current.map(tab=>tab.id);const next=event.key==='Home'?ids[0]:event.key==='End'?ids[ids.length-1]:shortcutTabId(ids,tab.id,'Tab',event.key==='ArrowLeft');activate(next);document.getElementById('document-tab-'+next)?.focus();}}}><DocumentPdf20Regular /><span>{tab.name}</span>{tab.state?.dirty&&<span className="dirty-dot" aria-label="有未导出修改" />}</button><button className="close-document" aria-label={'关闭 '+tab.name} title={'关闭 '+tab.name} disabled={!!operation} onClick={()=>{void closeTab(tab.id);}}><Dismiss20Regular /></button></div>)}</div><button className="new-document" aria-label="打开新标签" title="打开 PDF 到新标签 (Ctrl+O)" disabled={!!operation} onClick={()=>{void choose();}}><Add20Regular /></button><div className="workspace-drag" data-tauri-drag-region aria-hidden="true" />{isTauri()&&<WindowControls busy={!!operation||!localReady} onClose={()=>{void closeWindow();}} onError={setError} />}</div>
-    <DocumentToolbar reader={reader} findAdapter={panes.current.get(activeId)} findModal={settingsOpen||!!prompt} busy={!!operation} left={left} right={right&&!floating&&!!active} reading={reading} onOpen={()=>{void choose();}} onExport={()=>{void runOperation('exporting',()=>exportTab(activeId));}} onLeft={()=>{void action('hide-navigation');setReading(false);setLeft(value=>!value);}} onRight={()=>{setReading(false);if(floating){setFloating(false);setRight(true);}else setRight(value=>!value);}} onReading={()=>{void action('hide-navigation');setReading(value=>!value);}} onSettings={()=>openSettings()} onAction={value=>{void action(value);}} onPosition={(page,zoom)=>{void position(page,zoom);}} onComment={()=>{void panes.current.get(activeId)?.commentSelection().catch(error=>setError(String(error)));}} onComments={()=>{void panes.current.get(activeId)?.showComments().catch(error=>setError(String(error)));}} />
+    <DocumentToolbar reader={reader} findAdapter={panes.current.get(activeId)} findModal={settingsOpen||!!prompt||!!citationTab} busy={!!operation} left={left} right={right&&!floating&&!!active} reading={reading} onOpen={()=>{void choose();}} onExport={()=>{void runOperation('exporting',()=>exportTab(activeId));}} onLeft={()=>{void action('hide-navigation');setReading(false);setLeft(value=>!value);}} onRight={()=>{setReading(false);if(floating){setFloating(false);setRight(true);}else setRight(value=>!value);}} onReading={()=>{void action('hide-navigation');setReading(value=>!value);}} onSettings={()=>openSettings()} onCitation={()=>openCitation()} onAction={value=>{void action(value);}} onPosition={(page,zoom)=>{void position(page,zoom);}} onComment={()=>{void panes.current.get(activeId)?.commentSelection().catch(error=>setError(String(error)));}} onComments={()=>{void panes.current.get(activeId)?.showComments().catch(error=>setError(String(error)));}} />
     <input ref={input} type="file" multiple accept="application/pdf,.pdf" hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';if(files.length)void fileOpen(files);}} />
     {error&&<div className="error" role="alert">{error}<button aria-label="关闭错误提示" onClick={()=>setError('')}><Dismiss20Regular /></button></div>}{notice&&<div className="notice" role="status">{notice}<button aria-label="关闭通知" onClick={()=>setNotice('')}><Dismiss20Regular /></button></div>}
     {library.problems.map(problem=><div className="local-problem" role="alert" key={problem.kind+problem.document}><span>{problem.message}</span><button onClick={()=>{void repository.reload();}}>重新载入</button><button onClick={()=>{void repository.recover(problem).then(setNotice).catch(error=>setError(String(error)));}}>备份并恢复</button></div>)}
     <main>
       {left&&!reading&&<div className="panel-shell navigation-shell" style={{width:widths.left}}><ResizeHandle side="left" width={widths.left} max={widths.leftMax} onResize={value=>resizePanel('left',value)} /><LibraryPanel snapshot={library} reader={reader} onNavigate={index=>panes.current.get(activeId)?.navigate(index)} onRecent={recent=>{void openRecent(recent);}} onRelocate={recent=>{void relocate(recent);}} onNote={note=>{void locateNote(note);}} onError={setError} /></div>}
-      <section className="reader" aria-label="PDF 阅读区域">{tabs.map(tab=><DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} theme={theme} register={register} onEvent={readerEvent} onOpened={opened} />)}
+      <section className="reader" aria-label="PDF 阅读区域">{tabs.map(tab=><DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />)}
         {!tabs.length&&<div className="welcome"><DocumentPdf20Regular /><h1>打开文档，开始阅读</h1><p>可同时选择或拖入多个 PDF，在标签间切换。</p><button className="primary" disabled={!!operation} onClick={()=>{void choose();}}><FolderOpen20Regular />打开 PDF</button><span>Ctrl + O 打开 · Ctrl + Tab 切换标签</span><button onClick={()=>{void queueOpen(async()=>{const response=await fetch('/pdfjs/web/compressed.tracemonkey-pldi-09.pdf');if(!response.ok)throw Error('示例文件不可用');await openData(new Uint8Array(await response.arrayBuffer()),'示例论文.pdf');});}}>阅读示例论文</button></div>}
-        {reader?.selection&&!reader.selectionMenuOpen&&!operation&&preferences.selectionPopup&&<div className="selection-actions" style={{top:Math.max(8,Math.min((reader.selectionViewport?.y||30)+(reader.selectionViewport?.height||0)+8,window.innerHeight-220)),left:Math.max(8,Math.min(reader.selectionViewport?.x||16,viewport-(left?widths.left:0)-(right&&!floating?widths.right:0)-160))}}><button onMouseDown={event=>event.preventDefault()} onClick={()=>translateFloating()}><Translate20Regular />浮窗翻译</button></div>}
       </section>
       <div id="translation-panel" className={'panel-shell translation-shell'+(floating?' floating-translation':'')} hidden={!right||reading||!tabs.length} style={{width:floating?Math.min(480,viewport-32):widths.right}}>{!floating&&<ResizeHandle side="right" width={widths.right} max={widths.rightMax} onResize={value=>resizePanel('right',value)} />}{tabs.map(tab=><div className="tab-translation" key={tab.id} hidden={tab.id!==activeId} style={{'--translation-font-size': preferences.translationFontSize+'px'} as CSSProperties}><TranslationPanel reader={tab.state} documentKey={tab.fingerprint} documentName={tab.name} active={tab.id===activeId&&!settingsOpen} automatic={automatic} showMetadata={preferences.showMetadata} showOriginal={preferences.showOriginal} translateSignal={signals[tab.id]||0} floating={floating} onPin={()=>{setFloating(false);setRight(true);}} onClose={()=>setRight(false)} visible={tab.id===activeId&&right&&!reading} settingsOpen={false} onSettings={()=>openSettings('translation')} disabled={!!operation||!localReady||settingsOpen} onComment={()=>{}} /></div>)}{!tabs.length&&right&&!reading&&<aside className="translation"><div className="panel-heading"><h2>译文</h2><button aria-label="关闭翻译" onClick={()=>setRight(false)}><Dismiss20Regular /></button></div><p className="hint">打开 PDF 后选择文字翻译。</p></aside>}</div>
     </main>
     <footer><span>{tabs.length?`${tabs.length} 个文档`:'就绪'}{reader?.dirty?' · 有未导出批注':''}</span><span>{reader?`第 ${reader.page} / ${reader.pages} 页`:active?.name||'PDFreader'}</span></footer>
-    <SettingsDialog open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.fingerprint||''} />
+    <SettingsDialog open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.fingerprint||''} />
+    {citationTab && citationAdapter && <CitationDialog key={citationTab.id} documentName={citationTab.name} adapter={citationAdapter} onClose={() => setCitationId('')} />}
     <dialog ref={dialog} className="unsaved-dialog" aria-labelledby="unsaved-title" onCancel={event=>{event.preventDefault();answer('cancel');}}><h2 id="unsaved-title">有尚未导出的修改</h2><p>是否先导出“{prompt?.name}”的批注？</p><div className="dialog-actions"><button onClick={()=>answer('discard')}>放弃修改</button><button autoFocus onClick={()=>answer('cancel')}>取消</button><button className="primary" onClick={()=>answer('save')}>保存并继续</button></div></dialog>
     {dragging&&!isTauri()&&<div className="drop-target">松开以在新标签打开 PDF</div>}
   </div>;

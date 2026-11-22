@@ -1,23 +1,45 @@
 // PDFreader bridge for PDF.js 6.5.438. Upstream integration stays in this file.
 import { PDFViewerApplication as app, PDFViewerApplicationOptions as options } from './viewer.mjs';
-import { normalizeSelectionText } from './selection-text.mjs';
+import { AnnotationEditorType } from '../build/pdf.mjs';
+import { expandLigatures, normalizeSelectionText } from './selection-text.mjs';
 import { ExportState } from './export-state.mjs';
 import { hasCommentDraft, commitCommentDraft } from './comment-tools.mjs';
 import { copySelectionText, createSelectionMenu, hasTextSelection } from './selection-menu.mjs';
+import { createPreciseSelection } from './precise-selection.mjs';
+import { readCitationMetadata } from './citation-metadata.mjs';
 options.set('enableScripting', false);
 await app.initializedPromise;
 let documentId = '', activeDocument = null, selection = '', selectionRaw = '', selectionRects = [], selectionAnchor = '';
 let outline = [], destinations = [], pageHasText = null, ledger = new ExportState();
 let queue = Promise.resolve(), scanSequence = 0, exporting = false;
 let pendingEdit = false;
-let hostToolbar = false, findResult = null;
+let hostToolbar = false, showSelectionToolbar = true, findResult = null;
+let citationMetadata = null;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
 const viewer = document.getElementById('viewer');
+const selectionModes = [AnnotationEditorType.DISABLE, AnnotationEditorType.NONE,
+  AnnotationEditorType.HIGHLIGHT, AnnotationEditorType.POPUP, AnnotationEditorType.COMMENT];
+const precise = createPreciseSelection(viewer, {
+  enabled: () => hostToolbar && activeDocument && (app.pdfCursorTools?.activeTool ?? 0) === 0 &&
+    selectionModes.includes(app.pdfViewer.annotationEditorMode),
+  onChange: () => updateSelection(),
+  onFinish: (selected, point) => {
+    if (app.pdfViewer.annotationEditorMode !== AnnotationEditorType.HIGHLIGHT) {
+      selectionMenu.finish(selected, point);
+      return;
+    }
+    try { addMarkup('highlight', 'pdfreader_drag', selected); }
+    catch (error) { post({ type: 'error', message: error.message }); }
+  },
+});
 const selectionMenu = createSelectionMenu(viewer, {
-  run: action => { void runSelectionAction(action).catch(error => post({ type: 'error', message: error.message })); },
-  onVisibility: () => publish(),
+  run: (action, selected) => { void runSelectionAction(action, selected).catch(error => post({ type: 'error', message: error.message })); },
+  autoShow: () => hostToolbar && showSelectionToolbar && activeDocument && activeDocument === app.pdfDocument &&
+    app.pdfViewer.annotationEditorMode !== AnnotationEditorType.HIGHLIGHT,
   onDismissHostMenus: () => { if (activeDocument) post({ type: 'dismiss-menus' }); },
+  preciseSelection: () => precise.current,
+  preciseRects: selected => precise.clientRects(selected),
 });
 const controls = {
   highlight: 'editorHighlightButton', text: 'editorFreeTextButton', ink: 'editorInkButton',
@@ -32,38 +54,39 @@ function updateTextSize() { document.getElementById('pdfreader-text-size').value
 textSize.addEventListener('input', updateTextSize);
 app.eventBus.on('annotationeditorparamschanged', updateTextSize);
 
-function addMarkup(action, source) {
+function addMarkup(action, source, selected = precise.current) {
   const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-  if (!manager?.addSelectionMarkup(action === 'highlight' ? undefined : action, source)) {
+  if (!manager?.addSelectionMarkup(action === 'highlight' ? undefined : action, source, selected?.groups)) {
     throw Error('无法标记这段文字，请重新选择已加载的 PDF 文字。');
   }
+  if (selected) precise.clear();
   scheduleObserve();
 }
-function commentSelection(source) {
+function commentSelection(source, selected = precise.current) {
   const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
   if (!manager?.hasCommentManager()) throw Error('当前文档的注释工具尚未准备好');
-  if (!hasTextSelection(window.getSelection(), viewer)) throw Error('请先在 PDF 中选中要注释的文字');
-  manager.commentSelection(source);
+  if (!selected && !hasTextSelection(window.getSelection(), viewer)) throw Error('请先在 PDF 中选中要注释的文字');
+  const group = selected && { ...selected.groups[0], text: selected.text };
+  if (!manager.commentSelection(source, group)) throw Error('无法在该选区添加注释，请先定位到选区所在页面。');
+  if (selected) precise.clear();
 }
-async function runSelectionAction(action) {
+async function runSelectionAction(action, selected = precise.current) {
   if (!activeDocument || activeDocument !== app.pdfDocument) return;
   if (action === 'copy') {
-    await copySelectionText(window.getSelection().toString());
+    await copySelectionText(selected ? expandLigatures(selected.text) : window.getSelection().toString());
     post({ type: 'selection-copied' });
   } else if (action === 'translate') {
-    updateSelection();
+    updateSelection(selected);
     if (selection) post({ type: 'translate-selection' });
-  } else if (action === 'comment') commentSelection('pdfreader_context_menu');
-  else addMarkup(action, 'pdfreader_context_menu');
+  } else if (action === 'citation') post({ type: 'cite-document' });
+  else if (action === 'comment') commentSelection('pdfreader_selection_toolbar', selected);
+  else addMarkup(action, 'pdfreader_selection_toolbar', selected);
 }
 const storageHash = () => activeDocument?.annotationStorage.serializable.hash || '';
 function state() {
-  const current = window.getSelection?.();
-  const box = selection && current?.rangeCount ? current.getRangeAt(0).getBoundingClientRect() : null;
   return { documentId, page: app.pdfViewer.currentPageNumber, pages: activeDocument.numPages,
     selection, selectionRaw, selectionRects, selectionAnchor, pageHasText, outline, zoom: String(app.pdfViewer.currentScaleValue || 'auto'),
-    selectionViewport: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
-    selectionMenuOpen: selectionMenu.isOpen, find: findResult,
+    find: findResult,
     dirty: ledger.dirty || pendingEdit || hasCommentDraft(document), revision: ledger.revision };
 }
 function publish() {
@@ -102,7 +125,8 @@ async function readPageText() {
     publish();
   } catch { /* Leave unknown, rather than claiming that a failed page is a scan. */ }
 }
-app.eventBus.on('pagechanging', () => { publish(); void readPageText(); });
+app.eventBus.on('pagechanging', ({ pageNumber }) => { precise.prepareNearby(pageNumber); publish(); void readPageText(); });
+app.eventBus.on('textlayerrendered', ({ pageNumber, error }) => { if (!error) precise.pageRendered(pageNumber); });
 app.eventBus.on('scalechanging', publish);
 const findStatuses = ['found', 'not-found', 'wrapped', 'pending'];
 function updateFind({ source, state, previous, matchesCount }) {
@@ -168,10 +192,15 @@ document.addEventListener('change', event => {
   if (file) void requestFile(file).catch(error => post({ type: 'error', message: String(error) }));
 }, true);
 
-function updateSelection() {
+function updateSelection(selected = precise.current) {
   const current = window.getSelection();
   selectionRaw = ''; selection = ''; selectionRects = []; selectionAnchor = '';
-  if (current?.anchorNode && viewer.contains(current.anchorNode) && !current.isCollapsed) {
+  if (selected) {
+    selectionRaw = selected.text;
+    selection = normalizeSelectionText(selectionRaw);
+    selectionAnchor = selected.anchor;
+    selectionRects = selected.groups.flatMap(group => group.boxes.map(box => ({ page: group.page, ...box })));
+  } else if (current?.anchorNode && viewer.contains(current.anchorNode) && !current.isCollapsed) {
     selectionRaw = current.toString();
     selection = normalizeSelectionText(selectionRaw);
     // Text item and character offsets survive page fit/zoom and sidebar resize.
@@ -199,15 +228,37 @@ function updateSelection() {
       }
     }
   }
+  if (!selection) selectionMenu.close();
   publish();
 }
-document.addEventListener('selectionchange', updateSelection);
+document.addEventListener('selectionchange', () => {
+  if (precise.tracking) return;
+  if (precise.current && hasTextSelection(window.getSelection(), viewer)) precise.clear();
+  else updateSelection();
+});
+
+window.addEventListener('copy', event => {
+  if (!precise.current || !event.clipboardData || event.target instanceof Element &&
+      event.target.closest('input, textarea, [contenteditable=true]')) return;
+  event.clipboardData.setData('text/plain', expandLigatures(precise.current.text));
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 
 window.addEventListener('message', event => {
   if (event.source !== parent || event.origin !== location.origin || event.data?.channel !== 'pdfreader') return;
   const message = event.data;
   if (message.type === 'hello') { post({ type: 'ready' }); return; }
-  if (message.type === 'theme' && ['light','dark'].includes(message.theme)) { document.documentElement.dataset.theme = message.theme; document.documentElement.style.colorScheme = message.theme; return; }
+  if (message.type === 'theme' && ['light','dark'].includes(message.theme)) {
+    document.documentElement.dataset.theme = message.theme;
+    document.documentElement.dataset.accent = message.accent;
+    return;
+  }
+  if (message.type === 'selection-toolbar') {
+    showSelectionToolbar = message.enabled === true;
+    if (!showSelectionToolbar) selectionMenu.close();
+    return;
+  }
   if (message.type === 'host-ui') {
     hostToolbar = message.enabled === true;
     app.secondaryToolbar?.close();
@@ -218,9 +269,10 @@ window.addEventListener('message', event => {
   }
   if (message.type === 'open') {
     selectionMenu.close();
+    precise.setDocument(null);
     documentId = message.documentId;
     activeDocument = null; selection = ''; selectionRaw = ''; selectionRects = []; selectionAnchor = '';
-    outline = []; destinations = []; pageHasText = null; findResult = null; ++scanSequence;
+    outline = []; destinations = []; pageHasText = null; findResult = null; citationMetadata = null; ++scanSequence;
     snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
   } else if (message.documentId !== documentId) return;
   if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); return; }
@@ -255,6 +307,7 @@ window.addEventListener('message', event => {
         await app.open({ data: message.bytes, filename: message.filename });
         if (message.documentId !== documentId) return;
         activeDocument = app.pdfDocument;
+        precise.setDocument(activeDocument);
         ledger = new ExportState(storageHash());
         const entries = await activeDocument.getOutline();
         if (message.documentId !== documentId) return;
@@ -265,7 +318,14 @@ window.addEventListener('message', event => {
         if (dest) void app.pdfLinkService.goToDestination(dest);
       } else {
         if (!activeDocument || activeDocument !== app.pdfDocument) throw Error('没有可操作的文档');
-        if (message.type === 'action') {
+        if (message.type === 'citation-metadata') {
+          citationMetadata ??= readCitationMetadata(activeDocument).catch(error => {
+            if (message.documentId === documentId) citationMetadata = null;
+            throw error;
+          });
+          const metadata = await citationMetadata;
+          if (message.documentId === documentId) reply(metadata);
+        } else if (message.type === 'action') {
           const action = message.action;
           if (action === 'previous') app.pdfViewer.currentPageNumber = Math.max(1, app.pdfViewer.currentPageNumber - 1);
           else if (action === 'next') app.pdfViewer.currentPageNumber = Math.min(activeDocument.numPages, app.pdfViewer.currentPageNumber + 1);
@@ -280,7 +340,7 @@ window.addEventListener('message', event => {
             app.pdfViewer._layerProperties.annotationEditorUIManager?.[action]();
             observe();
           }
-          else if (action === 'underline' || action === 'strikeout' || action === 'highlight' && hasTextSelection(window.getSelection(), viewer)) {
+          else if (action === 'underline' || action === 'strikeout' || action === 'highlight' && (precise.current || hasTextSelection(window.getSelection(), viewer))) {
             addMarkup(action, 'pdfreader_toolbar');
           }
           else {

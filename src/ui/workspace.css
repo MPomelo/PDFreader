@@ -48,3 +48,9 @@
 .document-find-options input { margin: 0; }
 .document-find-status { font-size: 12px; color: var(--muted); }
 .document-find-status:empty { display: none; }
+.accent-picker { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 12px 0; padding: 0; border: 0; font-size: 12px; }
+.accent-picker legend { margin-bottom: 6px; padding: 0; }
+.accent-picker label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.accent-picker input { margin: 0; }
+.accent-swatch { width: 12px; height: 12px; border-radius: 50%; background: light-dark(var(--accent-light), var(--accent-dark)); }
+@media (forced-colors: active) { .accent-swatch { background: Canvas; border: 1px solid CanvasText; } }

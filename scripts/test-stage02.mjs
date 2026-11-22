@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { ExportState } from '../public/pdfjs/web/export-state.mjs';
-import { normalizeSelectionText } from '../public/pdfjs/web/selection-text.mjs';
+import { expandLigatures, normalizeSelectionText } from '../public/pdfjs/web/selection-text.mjs';
 import { configureViewer } from '../public/pdfjs/web/viewer-entry.mjs';
 import { hasCommentDraft, commitCommentDraft } from '../public/pdfjs/web/comment-tools.mjs';
 import { mayLeaveDocument } from '../src/reader/leave-document.ts';
@@ -32,7 +32,7 @@ const load = name => getDocument({ data: new Uint8Array(readFileSync(resolve(roo
 
 test('actual selection-note entry uses comment mode and never arms or creates a highlight', () => {
   const source = readFileSync('public/pdfjs/build/pdf.mjs', 'utf8');
-  const body = source.split('  commentSelection(methodOfCreation = "") {')[1]
+  const body = source.split('  commentSelection(methodOfCreation = "", group = null) {')[1]
     .split('\n  endCurrentEditing() {')[0].replace(/\n  }\s*$/, '')
     .replaceAll('this.#getAnchorElementForSelection', 'this.getAnchorElementForSelection')
     .replaceAll('this.#getLayerForTextLayer', 'this.getLayerForTextLayer');
@@ -40,10 +40,11 @@ test('actual selection-note entry uses comment mode and never arms or creates a 
   const selection = { isCollapsed: false, toString: () => 'selected words', removeAllRanges() {} };
   const layer = { add(editor) { notes.push(editor); } };
   class Note { constructor(params) { this.anchor = params.anchor; } editComment() { this.opened = true; } }
-  const invoke = new Function('document', 'NoteEditor', 'AnnotationEditorType', 'internalOpt', body);
+  const invoke = new Function('document', 'NoteEditor', 'AnnotationEditorType', 'internalOpt', 'group = null', body);
   let mode = 0;
   const manager = { getAnchorElementForSelection: () => ({ closest: () => ({}) }),
-    getLayerForTextLayer: () => layer, getSelectionBoxes: () => [{ x: 0.1, y: 0.1, width: 0.5 }],
+    getLayerForTextLayer: () => layer, getLayer: index => index === 1 ? layer : null,
+    getSelectionBoxes: () => [{ x: 0.1, y: 0.1, width: 0.5 }],
     getId: () => 'note', getMode: () => mode,
     _eventBus: { on: (name, callback) => callbacks.set(name, callback),
       dispatch(name, event) {
@@ -58,6 +59,9 @@ test('actual selection-note entry uses comment mode and never arms or creates a 
   assert.deepEqual(modes, [16, 16]);
   assert.equal(notes.length, 3, 'supports consecutive notes and switching from highlight mode');
   assert.ok(notes.every(note => note.opened && note.anchor.text === 'selected words'));
+  assert.equal(invoke.call(manager, { getSelection: () => null }, Note, { POPUP: 16 }, {},
+    { page: 2, text: 'Precisely selected words', boxes: [{ x: 0.25, y: 0.45, width: 0.4 }] }), true);
+  assert.deepEqual(notes.at(-1).anchor, { x: 0.25, y: 0.45, width: 0.4, text: 'Precisely selected words' });
 });
 
 test('standalone note lifecycle and real PDF save/reopen stay independent of highlights', async () => {
@@ -186,7 +190,7 @@ test('comments are enabled at component construction after stored preferences', 
   values.set('enableComment', false);
   assert.equal(await app._initializeViewerComponents(), 'ready');
   assert.equal(constructed.get('enableComment'), true);
-  assert.equal(constructed.get('enableHighlightFloatingButton'), true);
+  assert.equal(constructed.get('enableHighlightFloatingButton'), false);
   assert.equal(constructed.get('enableScripting'), false);
 });
 
@@ -316,7 +320,9 @@ test('actual bridge requires durable export acknowledgement and retains edits af
   const source = readFileSync('public/pdfjs/web/bridge.mjs', 'utf8').replace(/^import .*;\r?$/gm, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const createSelectionMenu = () => ({ isOpen: false, close() {} });
-  await new AsyncFunction('app', 'options', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, window, document, parent, location, class {});
+  const createPreciseSelection = () => ({ current: null, setDocument() {} });
+  const { AnnotationEditorType } = await import('../public/pdfjs/build/pdf.mjs');
+  await new AsyncFunction('app', 'options', 'AnnotationEditorType', 'expandLigatures', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'createPreciseSelection', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, AnnotationEditorType, expandLigatures, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, createPreciseSelection, window, document, parent, location, class {});
   const send = async (type, extra = {}) => {
     const requestId = crypto.randomUUID();
     handlers.get('message')({ source: parent, origin: location.origin, data: { channel: 'pdfreader', documentId: 'document-one', requestId, type, ...extra } });

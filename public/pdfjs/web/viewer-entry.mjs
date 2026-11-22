@@ -8,7 +8,7 @@ export function configureViewer(app, options) {
     options.set('viewOnLoad', 1); // LocalRepository restores by full content hash.
     options.set('sidebarViewOnLoad', 0); // A single host navigation entry; thumbnails remain in Tools.
     options.set('enableComment', true);
-    options.set('enableHighlightFloatingButton', true);
+    options.set('enableHighlightFloatingButton', false);
     return initialize.apply(this, args);
   };
 }

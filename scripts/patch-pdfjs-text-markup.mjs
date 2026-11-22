@@ -34,35 +34,43 @@ patch('public/pdfjs/build/pdf.mjs', [
     event.preventDefault();
   }
   keyup(event) {`],
-  ['  highlightSelection(methodOfCreation = "", comment = false) {', `  addSelectionMarkup(markup, methodOfCreation) {
+  ['  highlightSelection(methodOfCreation = "", comment = false) {', `  addSelectionMarkup(markup, methodOfCreation, groups = null) {
     const selection = document.getSelection();
-    if (!selection || selection.isCollapsed || this.#mode === AnnotationEditorType.DISABLE) return false;
-    const ranges = Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i));
+    if (this.#mode === AnnotationEditorType.DISABLE || !groups && (!selection || selection.isCollapsed)) return false;
     const targets = [];
-    for (const textLayer of this.#viewer.querySelectorAll(".textLayer")) {
-      const clipped = [];
-      for (const range of ranges) {
-        if (!range.intersectsNode(textLayer)) continue;
-        // Text nodes avoid duplicate span bounds and the selection sentinel at the page boundary.
-        const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!range.intersectsNode(node)) continue;
-          const part = document.createRange();
-          const start = range.startContainer === node ? range.startOffset : 0;
-          const end = range.endContainer === node ? range.endOffset : node.length;
-          part.setStart(node, start);
-          part.setEnd(node, end);
-          if (part.toString().trim()) clipped.push(part);
-        }
+    if (groups) {
+      for (const { page, boxes, text } of groups) {
+        const layer = this.getLayer(page - 1);
+        if (!layer || !boxes?.length) return false;
+        targets.push({ layer, boxes, text });
       }
-      if (!clipped.length) continue;
-      const layer = this.#getLayerForTextLayer(textLayer);
-      const boxes = this.getSelectionBoxes(textLayer, clipped);
-      if (!layer || !boxes?.length) return false;
-      targets.push({ layer, boxes, text: clipped.map(part => part.toString()).join(" ") });
+    } else {
+      const ranges = Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i));
+      for (const textLayer of this.#viewer.querySelectorAll(".textLayer")) {
+        const clipped = [];
+        for (const range of ranges) {
+          if (!range.intersectsNode(textLayer)) continue;
+          // Text nodes avoid duplicate span bounds and the selection sentinel at the page boundary.
+          const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!range.intersectsNode(node)) continue;
+            const part = document.createRange();
+            const start = range.startContainer === node ? range.startOffset : 0;
+            const end = range.endContainer === node ? range.endOffset : node.length;
+            part.setStart(node, start);
+            part.setEnd(node, end);
+            if (part.toString().trim()) clipped.push(part);
+          }
+        }
+        if (!clipped.length) continue;
+        const layer = this.#getLayerForTextLayer(textLayer);
+        const boxes = this.getSelectionBoxes(textLayer, clipped);
+        if (!layer || !boxes?.length) return false;
+        targets.push({ layer, boxes, text: clipped.map(part => part.toString()).join(" ") });
+      }
     }
     if (!targets.length) return false;
-    selection.removeAllRanges();
+    selection?.removeAllRanges();
     this.#floatingToolbar?.hide();
     this.unselectAll();
     const editors = targets.map(({ layer, ...data }) => layer.addSelectionMarkup({ ...data, markup, methodOfCreation }));

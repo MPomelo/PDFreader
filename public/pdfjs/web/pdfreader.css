@@ -12,39 +12,49 @@
 :root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
 :root[data-theme=light]{color-scheme:light!important}
 :root[data-theme=dark]{color-scheme:dark!important;--toolbar-bg-color:#252525;--toolbar-border-color:#484848;--body-bg-color:#171717;--button-hover-color:#383838;--main-color:#eee;--toolbar-icon-bg-color:#eee;--toolbar-icon-hover-bg-color:#eee;--field-color:#eee;--field-bg-color:#303030}
-.toolbarButton:focus-visible{outline:2px solid light-dark(#0f6cbd,#79bdff);outline-offset:-2px}
+.toolbarButton:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 /* Standalone note editors contain only the upstream comment marker. */
 .annotationEditorLayer .pdfreaderNoteEditor{position:absolute;pointer-events:none;background:transparent;outline:none}
 .annotationEditorLayer .pdfreaderNoteEditor .annotationCommentButton,.annotationEditorLayer .pdfreaderNoteEditor .editToolbar{pointer-events:auto}
 
-.pdfreader-selection-menu {
+.pdfreader-selection-toolbar:not([hidden]) {
   position: fixed;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
   z-index: 70;
-  padding: 5px;
-  min-width: min(136px, calc(100vw - 8px));
-  max-width: calc(100vw - 8px);
-  max-height: calc(100vh - 8px);
+  padding: 4px;
+  width: max-content;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 12px);
   overflow: auto;
   color: var(--main-color);
   background: var(--field-bg-color);
   border: 1px solid var(--toolbar-border-color);
-  border-radius: 6px;
-  box-shadow: 0 5px 18px #0003;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px #0003;
 }
-.pdfreader-selection-menu button {
-  display: block;
-  width: 100%;
-  padding: 6px 10px;
+.pdfreader-selection-toolbar button {
+  padding: 7px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   font: 13px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
-  text-align: start;
   cursor: pointer;
 }
-.pdfreader-selection-menu button:hover,
-.pdfreader-selection-menu button:focus-visible { background: var(--button-hover-color); }
-.pdfreader-selection-menu [data-action="copy"] { border-block-end: 1px solid var(--toolbar-border-color); }
-.pdfreader-selection-menu [data-action="translate"] { border-block-start: 1px solid var(--toolbar-border-color); }
+.pdfreader-selection-toolbar button:hover { background: var(--selected); color: var(--accent); }
+.pdfreader-selection-toolbar button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.pdfreader-selection-toolbar [data-action="translate"] { color: var(--accent); }
 #pdfreader-text-size { min-width: 3ch; text-align: end; }
+
+.pdfreader-precise-drag .textLayer { user-select: none; }
+.pdfreader-precise-selection { position: absolute; inset: 0; pointer-events: none; }
+.pdfreader-precise-selection > div {
+  position: absolute;
+  background: var(--accent-selection);
+}
+@media (forced-colors: active) {
+  .pdfreader-precise-selection > div { background: Highlight; opacity: .45; forced-color-adjust: none; }
+}

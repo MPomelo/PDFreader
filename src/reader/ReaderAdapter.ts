@@ -1,3 +1,6 @@
+import type { CitationMetadata } from '../citation/format';
+import type { Accent, ColorScheme } from '../ui/appearance';
+
 export type SelectionRect = { page: number; x: number; y: number; width: number; height: number };
 export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'rotate' | 'print' | 'highlight' | 'underline' | 'strikeout' | 'text' | 'ink' | 'select' | 'thumbnails' | 'hide-navigation'
   | 'first-page' | 'last-page' | 'rotate-left' | 'cursor-select' | 'cursor-hand' | 'scroll-page' | 'scroll-vertical' | 'scroll-horizontal' | 'scroll-wrapped' | 'spread-none' | 'spread-odd' | 'spread-even' | 'document-properties' | 'undo' | 'redo';
@@ -5,13 +8,12 @@ export type ReaderState = {
   documentId: string; page: number; pages: number; selection: string; selectionRaw: string;
   selectionRects: SelectionRect[]; pageHasText: boolean | null;
   outline: { title: string; index: number }[]; dirty: boolean; revision: number;
-  zoom?: string; selectionAnchor?: string; selectionViewport?: { x: number; y: number; width: number; height: number } | null;
-  selectionMenuOpen?: boolean;
+  zoom?: string; selectionAnchor?: string;
   find?: { requestId: string; status: 'pending' | 'found' | 'not-found' | 'wrapped'; current: number; total: number; previous: boolean } | null;
 };
 export type FindOptions = { highlightAll: boolean; caseSensitive: boolean; entireWord: boolean; matchDiacritics: boolean };
 export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string }
-  | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' };
+  | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' } | { type: 'cite-document' };
 type Pending = { resolve: (value: any) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 /** The only boundary between the shell and the fixed-version generic Viewer. */
@@ -43,7 +45,7 @@ export class ReaderAdapter {
     } else if (message.type === 'error') this.onEvent({ type: 'error', message: message.message });
     else if (message.type === 'export-requested') this.onEvent({ type: 'export-requested' });
     else if (message.type === 'file-open-requested') this.onEvent({ type: 'file-open-requested', bytes: message.bytes, filename: message.filename });
-    else if (message.type === 'dismiss-menus' || message.type === 'translate-selection' || message.type === 'selection-copied') this.onEvent({ type: message.type });
+    else if (['dismiss-menus', 'translate-selection', 'selection-copied', 'cite-document'].includes(message.type)) this.onEvent({ type: message.type });
   };
   private rejectPending(reason: string) {
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(reason)); }
@@ -73,6 +75,7 @@ export class ReaderAdapter {
   export() { return this.request<{ bytes: Uint8Array; token: string }>('export'); }
   markExported(token: string) { return this.request<ReaderState>('exported', { token }); }
   commentSelection() { return this.request<boolean>('comment-selection'); }
+  citationMetadata() { return this.request<CitationMetadata>('citation-metadata'); }
   showComments() { return this.request<boolean>('show-comments'); }
   find(requestId: string, query: string, options: FindOptions, again: boolean, previous: boolean) {
     this.send('find', { findId: requestId, query, options, again, previous });
@@ -81,7 +84,8 @@ export class ReaderAdapter {
   dismissSelectionMenu() { this.send('dismiss-selection-menu'); }
   navigate(index: number) { this.send('outline', { index }); }
   restore(page: number, zoom = 'auto') { return this.request<ReaderState>('restore', { page, zoom }); }
-  setTheme(theme: 'light' | 'dark') { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'theme', theme }, location.origin); }); }
+  setTheme(theme: ColorScheme, accent: Accent) { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'theme', theme, accent }, location.origin); }); }
+  setSelectionToolbar(enabled: boolean) { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'selection-toolbar', enabled }, location.origin); }); }
   setHostToolbar(enabled: boolean) { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'host-ui', enabled }, location.origin); }); }
   action(action: ReaderAction) { return this.request<ReaderState>('action', { action }); }
   private send(type: string, extra = {}) { this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type, documentId: this.documentId, ...extra }, location.origin); }

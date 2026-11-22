@@ -11,7 +11,7 @@ const moreTools: ReadonlyArray<{ label: string; items: ReadonlyArray<readonly [R
   { label: '文档', items: [['document-properties', '文档属性']] },
 ];
 
-export function DocumentToolbar({ reader, findAdapter, findModal, busy, left, right, reading, onOpen, onExport, onLeft, onRight, onReading, onSettings, onAction, onPosition, onComment, onComments }: { reader: ReaderState | null; findAdapter?: ReaderAdapter; findModal: boolean; busy: boolean; left: boolean; right: boolean; reading: boolean; onOpen: () => void; onExport: () => void; onLeft: () => void; onRight: () => void; onReading: () => void; onSettings: () => void; onAction: (action: ReaderAction) => void; onPosition: (page: number, zoom?: string) => void; onComment: () => void; onComments: () => void }) {
+export function DocumentToolbar({ reader, findAdapter, findModal, busy, left, right, reading, onOpen, onExport, onLeft, onRight, onReading, onSettings, onCitation, onAction, onPosition, onComment, onComments }: { reader: ReaderState | null; findAdapter?: ReaderAdapter; findModal: boolean; busy: boolean; left: boolean; right: boolean; reading: boolean; onOpen: () => void; onExport: () => void; onLeft: () => void; onRight: () => void; onReading: () => void; onSettings: () => void; onCitation: () => void; onAction: (action: ReaderAction) => void; onPosition: (page: number, zoom?: string) => void; onComment: () => void; onComments: () => void }) {
   const [page, setPage] = useState('');
   useEffect(() => setPage(reader ? String(reader.page) : ''), [reader?.page, reader?.documentId]);
   const disabled = !reader || busy;
@@ -32,7 +32,7 @@ export function DocumentToolbar({ reader, findAdapter, findModal, busy, left, ri
         <button disabled={disabled} onClick={() => onAction('ink')}><DrawShape20Regular />画笔</button>
         <button disabled={disabled || !reader?.selection} onClick={onComment}><Comment20Regular />为选区写注释</button>
         <button disabled={disabled} onClick={onComments}><Comment20Regular />注释列表</button>
-      </div></details><button disabled={disabled} aria-label="翻译侧栏" title="打开或关闭译文" aria-pressed={right && !reading} onClick={onRight}><Translate20Regular /><span>翻译</span></button></div>
+      </div></details><button disabled={disabled} aria-label="翻译侧栏" title="打开或关闭译文" aria-pressed={right && !reading} onClick={onRight}><Translate20Regular /><span>翻译</span></button><button disabled={disabled} aria-label="生成引文" title="生成文档引文" onClick={onCitation}><BookOpen20Regular /><span>引文</span></button></div>
     <div className="toolbar-group utilities-group">
       <details className="toolbar-menu" onToggle={event => {
         if (event.target === event.currentTarget && !event.currentTarget.open) event.currentTarget.querySelector('.more-pdf-tools')?.removeAttribute('open');
