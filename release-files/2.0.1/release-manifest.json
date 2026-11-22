@@ -1,0 +1,29 @@
+{
+  "version": "2.0.1",
+  "tag": "v2.0.1",
+  "date": "2026-11-22",
+  "platform": "windows-x64",
+  "status": "stable",
+  "repository": "https://github.com/MPomelo/PDFreader",
+  "artifacts": [
+    {
+      "file": "PDFreader_2.0.1_x64-setup.exe",
+      "bytes": 9302470,
+      "sha256": "02699d4d7a7920a7de5739825074cf5f58bf8bdc75e6473263ccea12c6e46e59",
+      "codeSignature": "unsigned"
+    }
+  ],
+  "sourceCommit": "c6c1918a403182fa3ae7a677cef747974a67836c",
+  "continuousIntegration": {
+    "status": "success",
+    "url": "https://github.com/MPomelo/PDFreader/actions/runs/45014850601",
+    "commit": "c6c1918a403182fa3ae7a677cef747974a67836c"
+  },
+  "checks": {
+    "windowsCiRegressionsAndBuild": "passed",
+    "windowsSilentInstallAndUninstall": "passed",
+    "browserColumnSpacingAndSelectionRegressions": "passed",
+    "browserReaderUpdateRegressions": "passed",
+    "browserWorkspaceRegressions": "passed"
+  }
+}
