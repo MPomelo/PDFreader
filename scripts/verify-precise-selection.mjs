@@ -137,6 +137,34 @@ try {
   await clipboard('Single column text continues into the second half of the same line of prose\n'.repeat(2) +
     'Single column text continues into the second half');
 
+  // Opt in with a local copy of the reported document.
+  if (process.env.PDFREADER_EVENTLENS_PDF) {
+    await page.locator('input[type=file]').setInputFiles(process.env.PDFREADER_EVENTLENS_PDF);
+    await expect(line(/^Abstract/).first()).toBeVisible({ timeout: 60000 });
+    await page.getByRole('combobox', { name: '缩放', exact: true }).selectOption('page-fit');
+    for (const [number, first, last, end, expected] of [
+      [3, /^EventLens adopts a coarse-to/, /^address the limitations of existing/, 22,
+        'EventLens adopts a coarse-to-fine hierarchical pipeline con-\nsisting of four synergistic stages, aiming to systematically\naddress the limitation'],
+      [9, /^Fig\. 5\.$/, /^while only a subset is visualized/, 28,
+        'Fig. 5. Qualitative comparisons on multiple-choice and open-ended video question answering. The top four examples are multiple-choice questions from\n' +
+        'VideoMME, and the bottom two examples are open-ended questions from VideoEval-Pro. For each video, 64 frames are selected as the final visual input,\n' +
+        'while only a subset is visua'],
+      [14, /^alignment before projection/, /^and audio understanding in video-LLMs/, 18,
+        'alignment before projection,” in Proc. Conf. Empirical Methods Natural\nLang. Process., 2024, pp. 5971–5984.\n' +
+        '[13] Z. Cheng et al., “VideoLLaMA 2: Advancing spatial–temporal modeling\nand audio understa'],
+      [15, /^MENT$/, /^vision, including person re-identi/, 17,
+        'MENT, and AAAI. His long-term research focuses on human-centric computer\nvision, including'],
+    ]) {
+      await goTo(number);
+      const start = line(first, number), finish = line(last, number);
+      await expect(start).toBeVisible();
+      await drag(start, 0, finish, end);
+      await action('复制').click();
+      await clipboard(expected);
+    }
+    console.log('Verified EventLens pages 3, 9, 14, and 15 by dragging and copying the selection.');
+  }
+
   await page.getByRole('tab', { name: 'precise-selection.pdf' }).click();
   await expect(leftFirst).toBeVisible({ timeout: 60000 });
   await button('上一页').waitFor();

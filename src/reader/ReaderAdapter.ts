@@ -15,6 +15,10 @@ export type FindOptions = { highlightAll: boolean; caseSensitive: boolean; entir
 export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string }
   | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' } | { type: 'cite-document' };
 type Pending = { resolve: (value: any) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
+export type NativePageLayout = {
+  width: number; height: number;
+  lines: Omit<SelectionRect, 'page'>[];
+};
 
 /** The only boundary between the shell and the fixed-version generic Viewer. */
 export class ReaderAdapter {
@@ -23,7 +27,8 @@ export class ReaderAdapter {
   private resolveReady!: () => void;
   private pending = new Map<string, Pending>();
   private disposed = false;
-  constructor(private frame: HTMLIFrameElement, private onEvent: (event: ReaderEvent) => void) {
+  constructor(private frame: HTMLIFrameElement, private onEvent: (event: ReaderEvent) => void,
+    private nativeLayout?: (page: number) => Promise<NativePageLayout | null>) {
     this.ready = new Promise(resolve => { this.resolveReady = resolve; });
     window.addEventListener('message', this.receive);
     this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'hello' }, location.origin);
@@ -34,7 +39,12 @@ export class ReaderAdapter {
     const message = event.data;
     if (message.type === 'ready') { this.resolveReady(); return; }
     if (message.documentId !== this.documentId) return;
-    if (message.type === 'reply') {
+    if (message.type === 'native-layout-request' && this.nativeLayout && Number.isSafeInteger(message.page) && message.page > 0) {
+      const { page, documentId } = message;
+      void this.nativeLayout(page).then(layout => {
+        if (!this.disposed && this.documentId === documentId && layout) this.send('native-layout', { page, layout });
+      }).catch(() => {});
+    } else if (message.type === 'reply') {
       const request = this.pending.get(message.requestId);
       if (!request) return;
       this.pending.delete(message.requestId); clearTimeout(request.timer);
@@ -68,7 +78,7 @@ export class ReaderAdapter {
     this.rejectPending('文档已切换');
     this.documentId = crypto.randomUUID();
     const id = this.documentId;
-    try { return await this.request('open', { bytes, filename }, [bytes.buffer as ArrayBuffer]); }
+    try { return await this.request('open', { bytes, filename, nativeLayout: !!this.nativeLayout }, [bytes.buffer as ArrayBuffer]); }
     catch (error) { if (id === this.documentId) this.documentId = ''; throw error; }
   }
   flush() { return this.request<ReaderState>('flush'); }

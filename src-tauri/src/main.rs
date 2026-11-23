@@ -8,6 +8,7 @@ mod sse;
 mod translation;
 mod local;
 mod launch;
+mod poppler;
 
 #[derive(Default)]
 struct AllowedFiles(Mutex<HashSet<PathBuf>>);
@@ -66,6 +67,25 @@ fn read_pdf(path: String, state: tauri::State<AllowedFiles>) -> Result<OpenedPdf
     if !bytes.starts_with(b"%PDF-") { return Err("文件不是有效的 PDF".into()); }
     Ok(OpenedPdf { name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: path.to_string_lossy().into_owned(), bytes })
 }
+
+#[tauri::command]
+async fn native_page_layout(path: String, fingerprint: String, page: u32, state: tauri::State<'_, AllowedFiles>) -> Result<Option<poppler::PageLayout>, String> {
+    if !poppler::enabled() || page == 0 {
+        return Ok(None);
+    }
+    let path = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
+    if !state.0.lock().map_err(|e| e.to_string())?.contains(&path) {
+        return Err("文件未经打开操作授权".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(path).ok()?;
+        if format!("{:x}", Sha256::digest(&bytes)) != fingerprint {
+            return None;
+        }
+        poppler::page_layout(&bytes, page)
+    }).await.map_err(|e| e.to_string())
+}
 fn main() {
     use tauri::{Emitter, Manager};
     tauri::Builder::default().manage(AllowedFiles::default()).manage(launch::IncomingPdfs::default())
@@ -83,6 +103,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![choose_pdf, choose_pdfs, startup_pdf, launch::startup_pdfs, read_pdf, export_pdf, finish_close,
+            native_page_layout,
             local::local_read, local::local_write, local::local_recover, local::reopen_pdf, local::export_notes,
             translation::api_load, translation::api_save, translation::api_secret_status,
             translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel])

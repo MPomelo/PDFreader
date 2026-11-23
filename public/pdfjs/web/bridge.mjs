@@ -15,6 +15,7 @@ let queue = Promise.resolve(), scanSequence = 0, exporting = false;
 let pendingEdit = false;
 let hostToolbar = false, showSelectionToolbar = true, findResult = null;
 let citationMetadata = null;
+let nativeLayoutRequested = false;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
 const viewer = document.getElementById('viewer');
@@ -23,6 +24,11 @@ const selectionModes = [AnnotationEditorType.DISABLE, AnnotationEditorType.NONE,
 const precise = createPreciseSelection(viewer, {
   enabled: () => hostToolbar && activeDocument && (app.pdfCursorTools?.activeTool ?? 0) === 0 &&
     selectionModes.includes(app.pdfViewer.annotationEditorMode),
+  requestNativeLayout: page => {
+    if (!nativeLayoutRequested) return false;
+    post({ type: 'native-layout-request', page });
+    return true;
+  },
   onChange: () => updateSelection(),
   onFinish: (selected, point) => {
     if (app.pdfViewer.annotationEditorMode !== AnnotationEditorType.HIGHLIGHT) {
@@ -271,10 +277,12 @@ window.addEventListener('message', event => {
     selectionMenu.close();
     precise.setDocument(null);
     documentId = message.documentId;
+    nativeLayoutRequested = message.nativeLayout === true;
     activeDocument = null; selection = ''; selectionRaw = ''; selectionRects = []; selectionAnchor = '';
     outline = []; destinations = []; pageHasText = null; findResult = null; citationMetadata = null; ++scanSequence;
     snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
   } else if (message.documentId !== documentId) return;
+  if (message.type === 'native-layout') { precise.setNativeLayout(message.page, message.layout); return; }
   if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); return; }
   if (message.type === 'find' || message.type === 'close-find') {
     if (!hostToolbar || !activeDocument || activeDocument !== app.pdfDocument) return;

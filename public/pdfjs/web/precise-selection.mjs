@@ -109,9 +109,10 @@ function boxUnion(boxes) {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) {
+export function createPreciseSelection(viewer, { enabled, requestNativeLayout, onChange, onFinish }) {
   const scrollbox = viewer.parentElement;
   const models = new Map(), metadata = new Map(), loading = new Map(), overlays = new Set();
+  const nativeLayouts = new Map();
   let pdf = null, metadataVersion = 0, drag = null, current = null, frame = 0;
 
   function layerFor(page) {
@@ -157,7 +158,11 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
         return { text: item.str, dir: item.dir, x: x / viewport.width, y: (baseline - item.height) / viewport.height,
           width: item.width / viewport.width, height: item.height / viewport.height };
       });
-      metadata.set(page, { roles: readStructure(tree), margins: edgeSignatures(items) });
+      metadata.set(page, {
+        roles: readStructure(tree),
+        margins: edgeSignatures(items),
+        nativeSize: pdfPage.rotate === 0 ? [viewport.width, viewport.height] : null,
+      });
       metadataVersion++;
     })().catch(() => {});
     loading.set(page, task);
@@ -166,6 +171,10 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
 
   function prepareNearby(page) {
     for (const index of [page, page - 1, page + 1, page - 2, page + 2]) prepare(index);
+    if (pdf && page >= 1 && page <= pdf.numPages && !nativeLayouts.has(page) && requestNativeLayout?.(page)) {
+      nativeLayouts.set(page, null);
+      if (nativeLayouts.size > 32) nativeLayouts.delete(nativeLayouts.keys().next().value);
+    }
   }
 
   function repeated(page, edge, text, line) {
@@ -202,7 +211,13 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
       items.push({ ...box, box, boxes, span, text, block, dir: span.dir, index });
     }
     if (!items.length) return cached;
-    const { lines, gutter } = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line));
+    const native = nativeLayouts.get(page);
+    const nativeSize = metadata.get(page)?.nativeSize;
+    const compatible = native && nativeSize && Math.abs(nativeSize[0] - native.width) < 0.5 &&
+      Math.abs(nativeSize[1] - native.height) < 0.5;
+    const { lines, gutter, usedNative } = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line),
+      compatible ? native.lines : null);
+    layer.dataset.pdfreaderLayout = usedNative ? 'poppler' : 'browser';
     for (const line of lines) for (const run of line.items) run.span.dataset.pdfreaderBlock = line.kind;
     const model = { page, layer, version: metadataVersion, rotation, width: parent.width, height: parent.height, lines, gutter };
     models.delete(page);
@@ -406,8 +421,14 @@ export function createPreciseSelection(viewer, { enabled, onChange, onFinish }) 
       metadata.clear();
       loading.clear();
       models.clear();
+      nativeLayouts.clear();
       metadataVersion++;
       if (pdf) prepareNearby(1);
+    },
+    setNativeLayout(page, layout) {
+      if (!nativeLayouts.has(page) || !Array.isArray(layout?.lines)) return;
+      nativeLayouts.set(page, layout);
+      models.delete(page);
     },
     prepareNearby,
     pageRendered(page) {

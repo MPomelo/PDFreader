@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { ReaderAdapter, type ReaderEvent, type ReaderState } from './ReaderAdapter';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { ReaderAdapter, type NativePageLayout, type ReaderEvent, type ReaderState } from './ReaderAdapter';
 import type { Accent, ColorScheme } from '../ui/appearance';
 export type DocumentTab = { id: string; name: string; path: string; fingerprint: string; bytes?: Uint8Array; initialPage: number; initialZoom: string; state: ReaderState | null; error?: string };
 export function DocumentPane({ tab, active, theme, accent, selectionToolbar, register, onEvent, onOpened }: { tab: DocumentTab; active: boolean; theme: ColorScheme; accent: Accent; selectionToolbar: boolean; register: (id: string, adapter: ReaderAdapter | null) => void; onEvent: (id: string, event: ReaderEvent) => void; onOpened: (id: string, state?: ReaderState, error?: string) => void }) {
@@ -7,7 +8,10 @@ export function DocumentPane({ tab, active, theme, accent, selectionToolbar, reg
   const events = useRef(onEvent), opened = useRef(onOpened); events.current = onEvent; opened.current = onOpened;
   useEffect(() => {
     let disposed = false;
-    const reader = new ReaderAdapter(frame.current!, event => events.current(tab.id, event)); adapter.current = reader; register(tab.id, reader);
+    const nativeLayout = tab.path && isTauri() ? async (page: number) =>
+      invoke<NativePageLayout | null>('native_page_layout', { path: tab.path, fingerprint: tab.fingerprint, page }) : undefined;
+    const reader = new ReaderAdapter(frame.current!, event => events.current(tab.id, event), nativeLayout);
+    adapter.current = reader; register(tab.id, reader);
     reader.setHostToolbar(true);
     void (async () => {
       try {

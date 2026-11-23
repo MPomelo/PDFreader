@@ -41,6 +41,22 @@ Desktop UI checks require a Windows desktop and system Edge; see scripts named
 The browser/workspace fixtures explicitly mock translation; never treat them as
 proof of a live provider response. Do not add provider calls to CI.
 
+### Poppler selection prototype
+
+For desktop testing, set `PDFREADER_POPPLER_DIR` to the absolute path of a trusted,
+locally installed Poppler GLib runtime before starting PDFreader. On Windows
+x64, the MSYS2 UCRT64 `mingw-w64-ucrt-x86_64-poppler` package and its dependencies
+provide the runtime in the `ucrt64\bin` directory. Use a local PDF opened through
+the desktop file picker. The Viewer uses Poppler's line positions and the
+original PDF.js text layer's character positions for copying and markup. The
+text layer has a `data-pdfreader-layout` attribute after it builds a selection
+model, which reports the active layout source for that page.
+
+Poppler is opt-in and distributed separately. Review its GPL requirements and
+verify the target Windows installer before considering bundling. PDFs that
+need a password in the Viewer, have an intrinsic rotation, or cannot be aligned
+use the browser layout.
+
 ## PDF.js and licensing
 
 The pinned generic viewer is vendored under `public/pdfjs`. Host integration

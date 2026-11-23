@@ -40,9 +40,10 @@ function median(values) {
   return sorted[Math.floor(sorted.length / 2)] || 0.018;
 }
 
+const center = item => item.y + item.height / 2;
+
 function getRows(items, tolerance = 0.44) {
   const rows = [];
-  const center = item => item.y + item.height / 2;
   for (const item of [...items].sort((a, b) => center(a) - center(b) || a.x - b.x)) {
     const row = rows.at(-1);
     if (row && Math.abs(center(item) - center(row[0])) <= Math.max(item.height, row[0].height) * tolerance) row.push(item);
@@ -62,24 +63,29 @@ function findGutter(items) {
   for (const row of getRows(ink, 0.68)) {
     const start = row[0].x;
     const end = Math.max(...row.map(item => item.x + item.width));
-    const y = median(row.map(item => item.y + item.height / 2));
+    const y = median(row.map(center));
     const height = median(row.map(item => item.height));
     const glyph = advance(row);
-    rows.push({ start, end, y });
-    let left = start;
+    const gaps = [];
+    let left = start, wideGaps = 0;
     for (const item of row) {
       const right = item.x;
       const middle = (left + right) / 2;
+      if (right - left > glyph * 1.5) wideGaps++;
       if (right - left >= Math.max(0.001, glyph * 0.26) && left - start >= 0.10 && end - right >= 0.10 && middle > 0.24 && middle < 0.76) {
         const key = Math.round(right / alignment);
         if (!candidates.has(key)) candidates.set(key, []);
-        candidates.get(key).push({ left, right, y, height, glyph });
+        const gap = { left, right, y, height, glyph };
+        gaps.push(gap);
+        candidates.get(key).push(gap);
       }
       left = Math.max(left, item.x + item.width);
     }
+    rows.push({ start, end, y, gaps, wideGaps });
   }
   let best = null;
   for (const pairs of candidates.values()) {
+    if (pairs.length < 2) continue;
     const left = Math.max(...pairs.map(pair => pair.left));
     const right = Math.min(...pairs.map(pair => pair.right));
     const split = (left + right) / 2;
@@ -91,8 +97,20 @@ function findGutter(items) {
     const bottom = Math.max(...pairs.map(pair => pair.y)) + height * 1.5;
     const nearby = rows.filter(row => row.y >= top && row.y <= bottom);
     const straddlingRows = nearby.filter(row => split - row.start >= 0.10 && row.end - split >= 0.10).length;
+    // Count whitespace at the split even when the right column starts farther
+    // in on a continuation line. Clearance favors the space before reference
+    // numbers over the smaller space between the number and its paragraph.
+    const minimumClearance = Math.max(0.0005, glyph * 0.09);
+    const support = nearby.flatMap(row => {
+      const gap = row.gaps.find(gap => gap.left + minimumClearance <= split && gap.right - minimumClearance >= split);
+      if (!gap) return [];
+      // A row with several wide, aligned spaces is weaker evidence for a
+      // prose column boundary. Tables often produce a stronger vertical
+      // whitespace strip than the prose elsewhere on the page.
+      return [Math.min(split - gap.left, gap.right - split, glyph * 1.5) / Math.max(1, row.wideGaps)];
+    });
     const narrow = width <= glyph * 1.5;
-    if (pairs.length < Math.max(narrow ? 4 : 2, Math.ceil(straddlingRows * (narrow ? 0.60 : 0.38)))) continue;
+    if (support.length < Math.max(narrow ? 4 : 2, Math.ceil(straddlingRows * (narrow ? 0.60 : 0.38)))) continue;
     if (narrow) {
       // A word gap can also line up. Require evidence that one column ends or
       // wraps independently when the whitespace is only about a glyph wide.
@@ -101,14 +119,29 @@ function findGutter(items) {
       const separateRows = nearby.filter(row => row.end <= split || row.start >= split).length;
       if (!unevenEnds && separateRows < 2) continue;
     }
-    if (!best || pairs.length > best.count || (pairs.length === best.count && Math.abs(split - 0.5) < Math.abs(best.split - 0.5))) {
-      best = { left, right, split, top, bottom, height, count: pairs.length };
+    const score = support.reduce((sum, space) => sum + space, 0);
+    if (!best || score > best.score || (score === best.score && Math.abs(split - 0.5) < Math.abs(best.split - 0.5))) {
+      best = { left, right, split, top, bottom, height, score };
+    }
+  }
+  if (best && best.right - best.left > best.height * 4) {
+    // As text wraps below an inset picture, the inner edge can move towards
+    // the gutter. Use the narrower corridor where neighboring rows still
+    // agree on the opposite edge.
+    for (const pairs of candidates.values()) {
+      if (pairs.length < 2 || !pairs.some(pair => pair.y >= best.top - best.height * 2 && pair.y <= best.bottom + best.height * 2)) continue;
+      const left = Math.max(...pairs.map(pair => pair.left));
+      const right = Math.min(...pairs.map(pair => pair.right));
+      if (right - left < 0.006 || left < best.left - 0.002 || right > best.right + 0.002) continue;
+      const sameEdge = Math.abs(left - best.left) < 0.002 || Math.abs(right - best.right) < 0.002;
+      if (!sameEdge || right - left >= best.right - best.left) continue;
+      best = { ...best, left, right, split: (left + right) / 2 };
     }
   }
   return best;
 }
 
-function getLines(rows, gutter = null) {
+function getLines(rows) {
   const lines = [];
   function finish(parts) {
     if (!parts.length) return;
@@ -121,17 +154,10 @@ function getLines(rows, gutter = null) {
     lines.push({ items: parts, x, y, width: right - x, height: bottom - y, fontHeight: median(parts.map(part => part.height)), rtl });
   }
   for (const row of rows) {
-    const rowCenter = row[0].y + row[0].height / 2;
-    const inColumnBand = gutter && rowCenter >= gutter.top && rowCenter <= gutter.bottom;
     let parts = [], right = -1;
     for (const item of row) {
-      const spansGutter = inColumnBand && item.x < gutter.right && item.x + item.width > gutter.left;
-      if (spansGutter && !item.text.trim()) continue;
       const gap = item.x - right;
-      const crossesGutter = inColumnBand && right <= gutter.split && item.x >= gutter.split &&
-        gap >= (gutter.right - gutter.left) * 0.65 && Math.abs(item.x - gutter.right) <= 0.035 &&
-        !(parts[0]?.height > gutter.height * 1.45 && item.height > gutter.height * 1.45);
-      if (gap > Math.max(0.023, item.height * 1.8) || crossesGutter) {
+      if (gap > Math.max(0.023, item.height * 1.8)) {
         finish(parts);
         parts = [];
         right = -1;
@@ -144,9 +170,70 @@ function getLines(rows, gutter = null) {
   return lines;
 }
 
+function columnLines(items, gutter) {
+  if (!gutter) return getLines(getRows(items));
+  const { split, height } = gutter;
+  const rows = getRows(items, 0.68).map(row => {
+    const ink = row.filter(item => item.text.trim());
+    const crosses = item => item.x < split && item.x + item.width > split;
+    const left = ink.filter(item => item.x + item.width <= split);
+    const right = ink.filter(item => item.x >= split);
+    const connected = left.length && right.length &&
+      right[0].x - Math.max(...left.map(item => item.x + item.width)) < (gutter.right - gutter.left) * 0.65;
+    const heading = left.length && right.length &&
+      median(left.map(item => item.height)) > height * 1.45 &&
+      median(right.map(item => item.height)) > height * 1.45;
+    return { row, y: median((ink.length ? ink : row).map(center)),
+      fits: ink.length && !ink.some(crosses) && !heading && !connected };
+  });
+  // Extend the evidence band through adjacent compatible rows, including text
+  // near the page edges that was excluded from gutter detection.
+  let first = rows.findIndex(row => row.y >= gutter.top);
+  let last = rows.findLastIndex(row => row.y <= gutter.bottom);
+  while (first > 0 && rows[first - 1].fits && rows[first].y - rows[first - 1].y <= height * 2) first--;
+  while (last >= 0 && last < rows.length - 1 && rows[last + 1].fits && rows[last + 1].y - rows[last].y <= height * 2) last++;
+
+  const left = [], right = [], spanning = [];
+  rows.forEach(({ row, fits }, index) => {
+    if (!fits || index < first || index > last) {
+      spanning.push(...row);
+      return;
+    }
+    for (const item of row) {
+      if (item.x + item.width <= split) left.push(item);
+      else if (item.x >= split) right.push(item);
+    }
+  });
+  return [left, right, spanning].flatMap(group => getLines(getRows(group)));
+}
+
+function fromNativeLayout(items, regions) {
+  if (!regions?.length) return null;
+  const rows = regions.map(() => []);
+  for (const item of items) {
+    let best = -1, distance = Infinity;
+    for (let index = 0; index < regions.length; index++) {
+      const region = regions[index];
+      const vertical = Math.abs(center(item) - center(region));
+      if (vertical > Math.max(item.height, region.height) * 0.72) continue;
+      const overlap = Math.min(item.x + item.width, region.x + region.width) - Math.max(item.x, region.x);
+      if (overlap < item.width * 0.72) continue;
+      const rank = vertical + (1 - overlap / item.width) * item.height;
+      if (rank < distance) { best = index; distance = rank; }
+    }
+    if (best >= 0) rows[best].push(item);
+    // Never remove printable text when the two engines disagree on a page.
+    else if (item.text.trim()) return null;
+  }
+  return getLines(rows.map(row => row.sort((a, b) => a.x - b.x)));
+}
+
+const standaloneTable = /^table\s+(?:[A-Z]?\d+|[IVXLCDM]+)$/iu;
+
 function captionKind(text) {
   if (/^(?:fig(?:ure)?\.?\s*[A-Z]?\d+[a-z]?(?:[.-]\d+)*\s*[:：.．–—]|图\s*[一二三四五六七八九十\d]+(?:[-.．]\d+)*\s*[：:.．、\s])/iu.test(text)) return 'figure-caption';
-  if (/^(?:table\s*(?:[A-Z]?\d+|[IVXLCDM]+)\s*[:：.．–—]|表\s*[一二三四五六七八九十\d]+(?:[-.．]\d+)*\s*[：:.．、\s])/iu.test(text)) return 'table-caption';
+  if (standaloneTable.test(text) ||
+      /^(?:table\s*(?:[A-Z]?\d+|[IVXLCDM]+)\s*[:：.．–—]|表\s*[一二三四五六七八九十\d]+(?:[-.．]\d+)*\s*[：:.．、\s])/iu.test(text)) return 'table-caption';
   return null;
 }
 
@@ -156,8 +243,10 @@ function lineKind(line, text, bodyHeight) {
   if (role && role !== 'caption') return role;
   if (caption || role) return caption || role;
   const edge = pageEdge(line);
-  if (edge && /^(?:(?:page|第)\s*)?(?:\d{1,4}|[ivxlcdm]{1,6})(?:\s*(?:\/|of)\s*\d+|\s*页)?$/iu.test(text) &&
+  if ((edge === 'footer' || edge === 'header' && line.y + line.height <= 0.075) &&
+      /^(?:(?:page|第)\s*)?(?:\d{1,6}|[ivxlcdm]{1,6})(?:\s*(?:\/|of)\s*\d+|\s*页)?$/iu.test(text) &&
       (line.x < 0.23 || line.x + line.width > 0.77 || Math.abs(line.x + line.width / 2 - 0.5) < 0.14)) return 'page-number';
+  if (line.y >= 0.80 && /^\d{1,2}\s*https?:\/\//iu.test(text)) return 'footnote';
   if (line.y >= 0.69 && line.fontHeight < bodyHeight * 0.92 &&
       /^(?:[\[［(（]\d{1,2}[\]］)）]|\d{1,2}[.)、．]|[¹²³⁴⁵⁶⁷⁸⁹⁰]+|[*†‡]+)\s*\p{L}/u.test(text)) return 'footnote';
   return 'body';
@@ -191,9 +280,10 @@ function readingOrder(lines, gutter) {
   ];
 }
 
-export function layoutLines(items, repeated = () => false) {
+export function layoutLines(items, repeated = () => false, nativeRegions = null) {
   const gutter = findGutter(items);
-  const lines = getLines(getRows(items), gutter);
+  const nativeLines = fromNativeLayout(items, nativeRegions);
+  const lines = nativeLines || columnLines(items, gutter);
   const entries = lines.map(line => {
     line.block = line.items.find(item => item.block)?.block;
     line.column = !gutter ? null : line.x + line.width <= gutter.split ? 'left' : line.x >= gutter.split ? 'right' : null;
@@ -207,19 +297,42 @@ export function layoutLines(items, repeated = () => false) {
     if (line.kind === 'body' && edge && repeated(edge, text, line)) line.kind = edge;
   }
 
-  // Wrapped captions/notes keep their role when they share the small type and line spacing.
+  // Continue captions within the same text block, even on pages without a
+  // reliable body font sample.
+  const texts = new Map(entries.map(({ line, text }) => [line, text]));
   const flowing = [];
   for (const line of [...lines].sort((a, b) => a.y - b.y)) {
-    const previous = flowing.findLast(other => other.column === line.column && Math.abs(other.x - line.x) <= 0.022 &&
+    const previous = flowing.findLast(other => (other.column === line.column || other.column === null && other.kind.endsWith('caption')) &&
+      (Math.abs(other.x - line.x) <= 0.022 || centeredTableTitle(line, other, texts.get(other))) &&
       line.y - other.y > other.height * 0.65 && line.y - other.y < other.height * 1.7);
-    if (line.kind === 'body' && previous && /caption|footnote/.test(previous.kind) &&
-        line.fontHeight < bodyHeight * 0.93 && Math.abs(line.fontHeight - previous.fontHeight) < previous.fontHeight * 0.15) {
+    if (line.kind === 'body' && previous &&
+        continuesAncillary(line, previous, texts.get(previous), bodyHeight)) {
       line.kind = previous.kind;
       line.block = previous.block || previous;
+      line.column = previous.column;
     }
     flowing.push(line);
   }
-  return { lines: readingOrder(lines, gutter), gutter };
+  return { lines: nativeLines || readingOrder(lines, gutter), gutter, usedNative: Boolean(nativeLines) };
+}
+
+function continuesAncillary(line, previous, previousText, bodyHeight) {
+  if (centeredTableTitle(line, previous, previousText)) return true;
+  if (Math.abs(line.fontHeight - previous.fontHeight) >= previous.fontHeight * 0.15) return false;
+  if (previous.kind === 'footnote') return line.fontHeight < bodyHeight * 0.93;
+  if (!previous.kind.endsWith('caption')) return false;
+  const extendsRight = line.x + line.width > previous.x + previous.width + 0.022;
+  if (!extendsRight) return true;
+  // Short opening lines can wrap into a longer second line in smaller type.
+  // A line that extends beyond a completed caption is usually another block.
+  return line.fontHeight < bodyHeight * 0.93 && !/[.!?。！？]$/u.test(previousText);
+}
+
+function centeredTableTitle(line, previous, previousText) {
+  return previous.kind === 'table-caption' && standaloneTable.test(previousText) &&
+    line.fontHeight >= previous.fontHeight * 0.60 && line.fontHeight <= previous.fontHeight * 1.45 &&
+    line.width > previous.width * 1.4 &&
+    Math.abs(line.x + line.width / 2 - previous.x - previous.width / 2) <= 0.022;
 }
 
 export function edgeSignatures(items) {
