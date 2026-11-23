@@ -165,6 +165,55 @@ try {
     console.log('Verified EventLens pages 3, 9, 14, and 15 by dragging and copying the selection.');
   }
 
+  if (process.env.PDFREADER_DDHG_PDF) {
+    await page.locator('input[type=file]').setInputFiles(process.env.PDFREADER_DDHG_PDF);
+    const run = index => frame.locator('.page[data-page-number="1"] .textLayer span[dir]').nth(index);
+    await expect(run(103)).toHaveText('Keywords:');
+    await expect(run(563)).toHaveText('video.');
+    const leftText = 'ideo Question Answering (VideoQA) is a classic interactive AI task\n' +
+      'Li et al. (2022), Xiao et al. (2021), Xu et al. (2021), whose objective\n' +
+      'is to answer the natural language questions based on the given video';
+    const rightText = 'challenge Xiao et al. (2024). Some studies Bai et al. (2024), Xiao et al.\n' +
+      '(2022b, 2023) opt to model the objects, their relations, and dynamics in\nvideos';
+    let abstractText;
+    async function copyRuns(first, start, last, end, containsBox) {
+      await run(first).evaluate((span, last) => {
+        const container = PDFViewerApplication.pdfViewer.container;
+        const other = span.closest('.textLayer').querySelectorAll('span[dir]')[last];
+        const y = (span.getBoundingClientRect().top + other.getBoundingClientRect().bottom) / 2;
+        const view = container.getBoundingClientRect();
+        container.scrollTop += y - view.top - view.height / 2;
+      }, last);
+      await drag(run(first), start, run(last), end);
+      const boxes = await selection.locator(':scope > div').evaluateAll(marks => marks.map(mark => ({
+        left: parseFloat(mark.style.left), right: parseFloat(mark.style.left) + parseFloat(mark.style.width),
+      })));
+      if (containsBox) assert.ok(boxes.length && boxes.every(containsBox));
+      await page.evaluate(() => navigator.clipboard.writeText(''));
+      await viewer.press('Control+c');
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      assert.ok(copied);
+      return copied;
+    }
+    for (const scale of ['page-fit', '1', '1.25', 'page-width']) {
+      await frame.locator('body').evaluate(value => { PDFViewerApplication.pdfViewer.currentScaleValue = value; }, scale);
+      const abstract = await copyRuns(116, 0, 485, 10, box => box.left > 33);
+      assert.match(abstract, /^Recently, Video Question Answering/);
+      assert.match(abstract, /state-of-the-art approaches$/);
+      assert.equal(abstract.split('\n').length, 14);
+      abstractText ??= abstract;
+      assert.equal(abstract, abstractText);
+      assert.equal(await copyRuns(485, 10, 116, 0, box => box.left > 33), abstractText);
+      assert.equal(await copyRuns(103, 0, 114, 8, box => box.right < 24),
+        'Keywords:\nVideo question answering\nVideo-language\nGraph neural network.');
+      assert.equal(await copyRuns(489, 1, 563, 5, box => box.right < 49), leftText);
+      assert.equal(await copyRuns(897, 0, 954, 6, box => box.left > 51), rightText);
+      assert.equal(await copyRuns(882, 1, 897, 5), 'pen\nchall');
+      assert.equal(await copyRuns(485, 0, 488, 5), 'approaches.\n1. Intro');
+    }
+    console.log('Verified the DDHG sidebar, abstract, and introduction at four zoom levels.');
+  }
+
   await page.getByRole('tab', { name: 'precise-selection.pdf' }).click();
   await expect(leftFirst).toBeVisible({ timeout: 60000 });
   await button('上一页').waitFor();

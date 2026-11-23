@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { layoutLines, lineText } from '../public/pdfjs/web/selection-layout.mjs';
+import { findMixedColumns, layoutLines, lineText } from '../public/pdfjs/web/selection-layout.mjs';
 
 function text(value, x, y, pageWidth, advance = 6, height = 10) {
   return { text: value, x: x / pageWidth, y: y / 792, width: value.length * advance / pageWidth, height: height / 792, dir: 'ltr' };
@@ -147,4 +147,38 @@ test('a column can widen below an inset without crossing the body gutter', () =>
   const { lines, gutter } = layoutLines(runs);
   assert.ok(gutter.split < 312 / 612);
   assert.deepEqual(lines.map(line => line.column), [...Array(16).fill('left'), ...Array(16).fill('right')]);
+});
+
+test('a narrow sidebar and the balanced columns below it get independent reading order', () => {
+  const title = text('Full-width title and authors of the example paper', 48, 165, 612, 9, 16);
+  const sidebar = ['Article details', 'Keywords:', 'Video-language', 'Scene graphs'].map((value, row) =>
+    text(value, 48, 252 + row * 12, 612));
+  const abstract = Array.from({ length: 9 }, (_, row) =>
+    text(row ? 'The abstract paragraph continues across the centre of the page.' : 'A b s t r a c t', 205, 252 + row * 12, 612));
+  const left = [], right = [];
+  for (let row = 0; row < 10; row++) {
+    const y = 406 + row * 12;
+    left.push(text(row === 2 ? 'Keywords: can also occur in ordinary prose.' : leftColumn, 48, y, 612, 5.65));
+    right.push(text(rightColumn, 319, y, 612, 5.65));
+  }
+  const caption = text('Fig. 1. A caption spanning both columns and extending into the right side.', 48, 560, 612);
+  const items = [title, ...sidebar, ...abstract, ...left, ...right, caption];
+  const bands = findMixedColumns(items);
+  assert.equal(bands?.length, 2);
+  const { regions, lines } = layoutLines(items.slice().reverse(), undefined, null, bands);
+  assert.ok(regions);
+  assert.deepEqual(lines.map(line => line.items[0]), items);
+  assert.equal(lines.find(line => line.items.includes(left[2])).kind, 'body');
+  assert.equal(lines.at(-1).kind, 'figure-caption');
+
+  // A keyword in ordinary text cannot supply evidence for an extra split.
+  assert.equal(findMixedColumns([title, ...left, ...right, caption]), null);
+  const table = Array.from({ length: 10 }, (_, row) =>
+    [48, 142, 262, 319, 419, 535].map(x => text('17.25', x, 406 + row * 12, 612))).flat();
+  assert.equal(findMixedColumns([title, ...sidebar, ...abstract, ...table]), null);
+  const spanning = text('A spanning line crosses the proposed division in the active text layer', 48, 450, 612);
+  assert.equal(layoutLines([...items, spanning], undefined, null, bands).regions, null);
+  const native = layoutLines(items, undefined, items, bands);
+  assert.equal(native.usedNative, true);
+  assert.equal(native.regions, null);
 });

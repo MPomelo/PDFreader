@@ -1,4 +1,4 @@
-import { edgeSignatures, isAncillary, layoutLines, lineText, readStructure, runningText } from './selection-layout.mjs';
+import { edgeSignatures, findMixedColumns, isAncillary, layoutLines, lineText, readStructure, runningText } from './selection-layout.mjs';
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
@@ -162,6 +162,7 @@ export function createPreciseSelection(viewer, { enabled, requestNativeLayout, o
         roles: readStructure(tree),
         margins: edgeSignatures(items),
         nativeSize: pdfPage.rotate === 0 ? [viewport.width, viewport.height] : null,
+        mixedColumns: page === 1 && pdfPage.rotate === 0 ? findMixedColumns(items) : null,
       });
       metadataVersion++;
     })().catch(() => {});
@@ -215,11 +216,11 @@ export function createPreciseSelection(viewer, { enabled, requestNativeLayout, o
     const nativeSize = metadata.get(page)?.nativeSize;
     const compatible = native && nativeSize && Math.abs(nativeSize[0] - native.width) < 0.5 &&
       Math.abs(nativeSize[1] - native.height) < 0.5;
-    const { lines, gutter, usedNative } = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line),
-      compatible ? native.lines : null);
+    const { lines, gutter, regions, usedNative } = layoutLines(items, (edge, text, line) => repeated(page, edge, text, line),
+      compatible ? native.lines : null, metadata.get(page)?.mixedColumns);
     layer.dataset.pdfreaderLayout = usedNative ? 'poppler' : 'browser';
     for (const line of lines) for (const run of line.items) run.span.dataset.pdfreaderBlock = line.kind;
-    const model = { page, layer, version: metadataVersion, rotation, width: parent.width, height: parent.height, lines, gutter };
+    const model = { page, layer, version: metadataVersion, rotation, width: parent.width, height: parent.height, lines, gutter, regions };
     models.delete(page);
     models.set(page, model);
     if (models.size > 32) models.delete(models.keys().next().value);
@@ -235,7 +236,8 @@ export function createPreciseSelection(viewer, { enabled, requestNativeLayout, o
     if (!model) return null;
     const { parent, rotation, x, y } = getPosition(layer, clientX, clientY);
     const startColumn = drag?.anchor.model.page === page ? drag.anchor.line.column : null;
-    const inGutter = model.gutter && x > model.gutter.left && x < model.gutter.right;
+    const gutter = model.regions ? model.regions.find(region => y >= region.top && y < region.bottom)?.gutter : model.gutter;
+    const inGutter = gutter && x > gutter.left && x < gutter.right;
     let best = null, distance = Infinity;
     for (let lineIndex = 0; lineIndex < model.lines.length; lineIndex++) {
       const line = model.lines[lineIndex];
@@ -270,7 +272,8 @@ export function createPreciseSelection(viewer, { enabled, requestNativeLayout, o
     if (!difference) return null;
     const [start, end] = difference < 0 ? [anchor, focus] : [focus, anchor];
     const ancillary = isAncillary(anchor.line.kind);
-    const column = !ancillary && start.model.page === end.model.page && start.line.column === end.line.column ? start.line.column : null;
+    const sameRegion = start.model.page === end.model.page && start.line.region === end.line.region;
+    const column = !ancillary && sameRegion && start.line.column === end.line.column ? start.line.column : null;
     const groups = [];
     for (let page = start.model.page; page <= end.model.page; page++) {
       const model = drag.models.get(page) || modelFor(page);
@@ -283,7 +286,7 @@ export function createPreciseSelection(viewer, { enabled, requestNativeLayout, o
         const line = model.lines[row];
         if (ancillary) {
           if ((line.block || line) !== (anchor.line.block || anchor.line)) continue;
-        } else if (isAncillary(line.kind) || column && line.column !== column) continue;
+        } else if (isAncillary(line.kind) || column && (line.region !== start.line.region || line.column !== column)) continue;
         const first = line === start.line ? start.runIndex : 0;
         const last = line === end.line ? end.runIndex : line.items.length - 1;
         const parts = [];

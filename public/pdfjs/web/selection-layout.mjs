@@ -41,6 +41,7 @@ function median(values) {
 }
 
 const center = item => item.y + item.height / 2;
+const rightEdge = item => item.x + item.width;
 
 function getRows(items, tolerance = 0.44) {
   const rows = [];
@@ -141,6 +142,56 @@ function findGutter(items) {
   return best;
 }
 
+// Look for a narrow sidebar beside a wide paragraph above balanced prose
+// columns. The evidence comes from PDF coordinates, before CSS text sizing.
+export function findMixedColumns(items) {
+  const ink = items.filter(item => item.text.trim() && !pageEdge(item)).sort((a, b) => a.y - b.y);
+  const height = median(ink.map(item => item.height));
+  const bands = [];
+  let bottom = 0;
+  for (const item of ink) {
+    if (!bands.length || item.y - bottom > height * 1.6) {
+      const boundary = bands.length ? (item.y + bottom) / 2 : 0;
+      if (bands.length) bands.at(-1).bottom = boundary;
+      bands.push({ top: boundary, bottom: 1, items: [] });
+    }
+    bands.at(-1).items.push(item);
+    bottom = Math.max(bottom, item.y + item.height);
+  }
+
+  for (let i = 1; i < bands.length; i++) {
+    const upper = bands[i - 1], lower = bands[i];
+    if (upper.top < 0.12 || lower.top < 0.28 || lower.top > 0.72) continue;
+    const body = findGutter(lower.items);
+    if (!body || Math.abs(body.split - 0.5) > 0.06) continue;
+    const proseWidth = runs => {
+      if (!runs.length) return 0;
+      const width = Math.max(...runs.map(rightEdge)) - runs[0].x;
+      // Widely separated cells can span a column without filling it.
+      return runs.reduce((ink, run) => ink + run.width, 0) >= width * 0.70 ? width : 0;
+    };
+    const paired = getRows(lower.items, 0.68).filter(row => {
+      const left = row.filter(item => rightEdge(item) <= body.split);
+      const right = row.filter(item => item.x >= body.split);
+      return row.length === left.length + right.length && proseWidth(left) >= 0.27 && proseWidth(right) >= 0.27;
+    });
+    if (paired.length < 6) continue;
+    const sidebar = findGutter(upper.items);
+    if (!sidebar || sidebar.right > body.left - 0.05 || sidebar.right - sidebar.left < 0.035 ||
+        upper.items.some(item => item.x < sidebar.split && rightEdge(item) > sidebar.split)) continue;
+    const left = getRows(upper.items.filter(item => rightEdge(item) <= sidebar.split));
+    const right = getRows(upper.items.filter(item => item.x >= sidebar.split));
+    if (left.length < 3 || right.length < 6 ||
+        Math.abs(center(left[0][0]) - center(right[0][0])) > height ||
+        Math.abs(left[0][0].x - median(paired.map(row => row[0].x))) > 0.025 ||
+        right.filter(row => Math.abs(row[0].x - sidebar.right) < 0.02 &&
+          Math.max(...row.map(rightEdge)) >= body.right + 0.12).length < 5) continue;
+    return [{ top: upper.top, bottom: upper.bottom, gutter: sidebar },
+      { top: lower.top, bottom: lower.bottom, gutter: body }];
+  }
+  return null;
+}
+
 function getLines(rows) {
   const lines = [];
   function finish(parts) {
@@ -207,6 +258,45 @@ function columnLines(items, gutter) {
   return [left, right, spanning].flatMap(group => getLines(getRows(group)));
 }
 
+function mixedColumnLines(items, bands, gutter) {
+  const regions = [];
+  let top = 0;
+  for (const band of bands) {
+    if (band.top > top) regions.push({ top, bottom: band.top, gutter });
+    regions.push({ ...band, local: true });
+    top = band.bottom;
+  }
+  if (top < 1) regions.push({ top, bottom: 1, gutter });
+
+  for (const [index, region] of regions.entries()) {
+    const runs = items.filter(item => center(item) >= region.top && center(item) < region.bottom);
+    let lines;
+    if (region.local) {
+      const { split } = region.gutter;
+      // A rebuilt text layer must agree with the two bands. A run that crosses
+      // a split might contain real text from a spanning line.
+      if (runs.some(item => item.text.trim() && (item.x < split && rightEdge(item) > split ||
+          item.y < region.top || item.y + item.height > region.bottom))) return null;
+      const left = runs.filter(item => item.x + item.width / 2 < split);
+      const right = runs.filter(item => item.x + item.width / 2 >= split);
+      if (!left.some(item => item.text.trim()) || !right.some(item => item.text.trim())) return null;
+      const leftLines = getLines(getRows(left));
+      const rightLines = getLines(getRows(right));
+      for (const line of leftLines) line.column = 'left';
+      for (const line of rightLines) line.column = 'right';
+      lines = [...leftLines, ...rightLines];
+    } else {
+      lines = columnLines(runs, gutter);
+    }
+    region.lines = lines;
+    for (const line of lines) line.region = index;
+  }
+  if (regions.reduce((count, region) => count + region.lines.reduce((sum, line) =>
+    sum + line.items.filter(item => item.text.trim()).length, 0), 0) !==
+    items.filter(item => item.text.trim()).length) return null;
+  return regions;
+}
+
 function fromNativeLayout(items, regions) {
   if (!regions?.length) return null;
   const rows = regions.map(() => []);
@@ -252,7 +342,7 @@ function lineKind(line, text, bodyHeight) {
   return 'body';
 }
 
-function readingOrder(lines, gutter) {
+function readingOrder(lines, gutter, moveMargins = true) {
   const visual = [...lines].sort((a, b) => a.y - b.y || a.x - b.x);
   if (!gutter) return visual;
   const body = visual.filter(line => !isAncillary(line.kind));
@@ -272,6 +362,10 @@ function readingOrder(lines, gutter) {
     }
   }
   flush();
+  return moveMargins ? marginOrder(visual, order) : order;
+}
+
+function marginOrder(visual, order) {
   // Margin material is selected on its own, even in a two-column layout.
   return [
     ...visual.filter(line => pageEdge(line) === 'header' && (line.kind === 'header' || line.kind === 'page-number')),
@@ -280,13 +374,14 @@ function readingOrder(lines, gutter) {
   ];
 }
 
-export function layoutLines(items, repeated = () => false, nativeRegions = null) {
+export function layoutLines(items, repeated = () => false, nativeRegions = null, bands = null) {
   const gutter = findGutter(items);
   const nativeLines = fromNativeLayout(items, nativeRegions);
-  const lines = nativeLines || columnLines(items, gutter);
+  const regions = !nativeLines && bands ? mixedColumnLines(items, bands, gutter) : null;
+  const lines = nativeLines || regions?.flatMap(region => region.lines) || columnLines(items, gutter);
   const entries = lines.map(line => {
     line.block = line.items.find(item => item.block)?.block;
-    line.column = !gutter ? null : line.x + line.width <= gutter.split ? 'left' : line.x >= gutter.split ? 'right' : null;
+    line.column ??= !gutter ? null : rightEdge(line) <= gutter.split ? 'left' : line.x >= gutter.split ? 'right' : null;
     return { line, text: lineText(line.items).trim() };
   });
   const bodyHeight = median(entries.filter(({ line, text }) => !pageEdge(line) && line.y < 0.69 &&
@@ -302,7 +397,8 @@ export function layoutLines(items, repeated = () => false, nativeRegions = null)
   const texts = new Map(entries.map(({ line, text }) => [line, text]));
   const flowing = [];
   for (const line of [...lines].sort((a, b) => a.y - b.y)) {
-    const previous = flowing.findLast(other => (other.column === line.column || other.column === null && other.kind.endsWith('caption')) &&
+    const previous = flowing.findLast(other => other.region === line.region &&
+      (other.column === line.column || other.column === null && other.kind.endsWith('caption')) &&
       (Math.abs(other.x - line.x) <= 0.022 || centeredTableTitle(line, other, texts.get(other))) &&
       line.y - other.y > other.height * 0.65 && line.y - other.y < other.height * 1.7);
     if (line.kind === 'body' && previous &&
@@ -313,7 +409,9 @@ export function layoutLines(items, repeated = () => false, nativeRegions = null)
     }
     flowing.push(line);
   }
-  return { lines: nativeLines || readingOrder(lines, gutter), gutter, usedNative: Boolean(nativeLines) };
+  const order = nativeLines || (regions ? marginOrder([...lines].sort((a, b) => a.y - b.y || a.x - b.x),
+    regions.flatMap(region => readingOrder(region.lines, region.gutter, false))) : readingOrder(lines, gutter));
+  return { lines: order, gutter, regions, usedNative: Boolean(nativeLines) };
 }
 
 function continuesAncillary(line, previous, previousText, bodyHeight) {
