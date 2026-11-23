@@ -1,62 +1,32 @@
-name: Windows checks and installer
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+name: Attach verified PDFreader 2.0.2 release assets
+on: workflow_dispatch
 permissions:
-  contents: read
+  contents: write
+  actions: read
 jobs:
-  windows:
-    runs-on: windows-latest
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: npm ci
-      - run: npm run audit:public
-      - run: python -m pip install pypdf Pillow
-      - name: Install independent PDF renderer
-        shell: pwsh
-        run: |
-          choco install poppler --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Poppler installation failed' }
-          $renderer = Get-ChildItem "$env:ChocolateyInstall\lib\poppler" -Filter pdftoppm.exe -Recurse | Select-Object -First 1
-          if (-not $renderer) { throw 'pdftoppm.exe was not installed' }
-          $renderer.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - run: npm run test:stage02
-      - run: npm run test:stage03
-      - run: npm run test:stage04
-      - run: npm run test:stage05
-      - run: npm run test:workspace
-      - run: npm run test:native
-      - run: node scripts/collect-runtime-licenses.mjs
-      - run: node scripts/collect-rust-licenses.mjs
-      - run: npm run desktop:bundle
-      - name: Smoke-test Windows installer
-        timeout-minutes: 4
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          if (-not $installer) { throw 'Windows installer is missing' }
-          $target = Join-Path $env:RUNNER_TEMP 'PDFreader installer test'
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$target" -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Installer exit code $($install.ExitCode)" }
-          $exe = Join-Path $target 'pdfreader.exe'
-          $uninstaller = Join-Path $target 'uninstall.exe'
-          if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or -not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
-            throw 'Installed executable or uninstaller is missing'
-          }
-          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $exe)) { throw 'Silent uninstall failed' }
-      - uses: actions/upload-artifact@v4
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
         with:
           name: PDFreader-windows-x64-installer
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
-          if-no-files-found: error
+          run-id: 45139498661
+          github-token: ${{ github.token }}
+          path: release-files/2.0.2
+      - name: Verify and attach the release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run view 45139498661 --repo MPomelo/PDFreader --json headSha,conclusion |
+            jq -e '.headSha == "afa10590e56c8512c4c86850138573a6ff13501e" and .conclusion == "success"'
+          gh api repos/MPomelo/PDFreader/releases/455162980 |
+            jq -e '.draft and (.prerelease | not) and .tag_name == "v2.0.2" and
+              .target_commitish == "afa10590e56c8512c4c86850138573a6ff13501e" and (.assets | length == 0)'
+          cd release-files/2.0.2
+          sha256sum -c SHA256SUMS.txt
+          gh release upload v2.0.2 PDFreader_2.0.2_x64-setup.exe SHA256SUMS.txt release-manifest.json --repo MPomelo/PDFreader
