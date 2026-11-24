@@ -54,3 +54,19 @@
 .accent-picker input { margin: 0; }
 .accent-swatch { width: 12px; height: 12px; border-radius: 50%; background: light-dark(var(--accent-light), var(--accent-dark)); }
 @media (forced-colors: active) { .accent-swatch { background: Canvas; border: 1px solid CanvasText; } }
+
+.new-document > .command-menu {
+  inset-block-start: calc(100% + 4px);
+  inset-inline: auto 0;
+  min-width: 0;
+  width: max-content;
+  padding: 4px;
+}
+.document-tabs:empty + .new-document > .command-menu { inset-inline: 0 auto; }
+.new-document > .command-menu button {
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+}

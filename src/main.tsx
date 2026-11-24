@@ -357,7 +357,10 @@ function App() {
       try{const snapshot=await local;const batch=await invoke<{paths:string[];errors:string[]}>('startup_pdfs');if(disposed)return;if(batch.errors.length)setError(batch.errors.join('\n'));if(batch.paths.length)await queueOpen(()=>handlers.current.openPaths(batch.paths));else if(prefsRef.current.restoreProgress){const recent=snapshot.book.recents.find(recent=>recent.path);if(recent){const path=await invoke<string>('reopen_pdf',{path:recent.path});await queueOpen(()=>handlers.current.openPaths([path]));}}}catch(error){if(!disposed)setError(String(error));}
     })().catch(error=>{if(!disposed)setError(String(error));});
     const key=(event:KeyboardEvent)=>{
-      if(event.key==='Escape')dismissToolbarMenus();
+      if (event.key === 'Escape') {
+        dismissToolbarMenus();
+        panes.current.get(activeRef.current)?.dismissLinkPreview();
+      }
       if(!(event.ctrlKey||event.metaKey))return;
       const value=event.key.toLowerCase();if(modalRef.current){if(value==='w'||value==='tab')event.preventDefault();return;}if(exclusive.current)return;
       if(event.shiftKey&&event.key==='Enter'&&panes.current.has(activeRef.current)){event.preventDefault();event.stopImmediatePropagation();const id=activeRef.current;if(id){setReading(false);setFloating(false);setRight(true);setSignals(previous=>({...previous,[id]:(previous[id]||0)+1}));}}
@@ -406,7 +409,7 @@ function App() {
     {library.problems.map(problem=><div className="local-problem" role="alert" key={problem.kind+problem.document}><span>{problem.message}</span><button onClick={()=>{void repository.reload();}}>重新载入</button><button onClick={()=>{void repository.recover(problem).then(setNotice).catch(error=>setError(String(error)));}}>备份并恢复</button></div>)}
     <main>
       {left&&!reading&&<div className="panel-shell navigation-shell" style={{width:widths.left}}><ResizeHandle side="left" width={widths.left} max={widths.leftMax} onResize={value=>resizePanel('left',value)} /><LibraryPanel snapshot={library} reader={reader} onNavigate={index=>panes.current.get(activeId)?.navigate(index)} onRecent={recent=>{void openRecent(recent);}} onRelocate={recent=>{void relocate(recent);}} onNote={note=>{void locateNote(note);}} onError={setError} /></div>}
-      <section className="reader" aria-label="文档内容">{tabs.map(tab=>tab.kind==='pdf' ? <DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />
+      <section className="reader" aria-label="文档内容">{tabs.map(tab=>tab.kind==='pdf' ? <DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} linkPreviewActive={tab.id===activeId&&!modalRef.current&&!operation} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />
         : <TextPane key={tab.id} tab={tab} active={tab.id===activeId} busy={!!operation} register={registerText} onEdit={editText}
           onMode={(id,mode)=>patchText(id,{mode})} onImages={(id,files,position)=>{void insertImages(id,files,position);}}
           onCopy={setNotice} onError={setError} />)}

@@ -7,6 +7,7 @@ import { hasCommentDraft, commitCommentDraft } from './comment-tools.mjs';
 import { copySelectionText, createSelectionMenu, hasTextSelection } from './selection-menu.mjs';
 import { createPreciseSelection } from './precise-selection.mjs';
 import { readCitationMetadata } from './citation-metadata.mjs';
+import { createLinkPreview } from './link-preview.mjs';
 options.set('enableScripting', false);
 await app.initializedPromise;
 let documentId = '', activeDocument = null, selection = '', selectionRaw = '', selectionRects = [], selectionAnchor = '';
@@ -15,7 +16,7 @@ let queue = Promise.resolve(), scanSequence = 0, exporting = false;
 let pendingEdit = false;
 let hostToolbar = false, showSelectionToolbar = true, findResult = null;
 let citationMetadata = null;
-let nativeLayoutRequested = false;
+let nativeLayoutRequested = false, linkPreviewActive = false;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
 const viewer = document.getElementById('viewer');
@@ -46,6 +47,12 @@ const selectionMenu = createSelectionMenu(viewer, {
   onDismissHostMenus: () => { if (activeDocument) post({ type: 'dismiss-menus' }); },
   preciseSelection: () => precise.current,
   preciseRects: selected => precise.clientRects(selected),
+});
+const linkPreview = createLinkPreview(viewer, app, {
+  getDocument: () => activeDocument === app.pdfDocument ? activeDocument : null,
+  enabled: () => linkPreviewActive && !precise.tracking && !selection &&
+    (app.pdfCursorTools?.activeTool ?? 0) === 0 && !app.pdfViewer.isInPresentationMode &&
+    [AnnotationEditorType.NONE, AnnotationEditorType.DISABLE].includes(app.pdfViewer.annotationEditorMode),
 });
 const controls = {
   highlight: 'editorHighlightButton', text: 'editorFreeTextButton', ink: 'editorInkButton',
@@ -265,6 +272,11 @@ window.addEventListener('message', event => {
     if (!showSelectionToolbar) selectionMenu.close();
     return;
   }
+  if (message.type === 'link-preview-active') {
+    linkPreviewActive = message.enabled === true;
+    if (!linkPreviewActive) linkPreview.close();
+    return;
+  }
   if (message.type === 'host-ui') {
     hostToolbar = message.enabled === true;
     app.secondaryToolbar?.close();
@@ -274,6 +286,7 @@ window.addEventListener('message', event => {
     return;
   }
   if (message.type === 'open') {
+    linkPreview.reset();
     selectionMenu.close();
     precise.setDocument(null);
     documentId = message.documentId;
@@ -283,7 +296,8 @@ window.addEventListener('message', event => {
     snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
   } else if (message.documentId !== documentId) return;
   if (message.type === 'native-layout') { precise.setNativeLayout(message.page, message.layout); return; }
-  if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); return; }
+  if (message.type === 'dismiss-link-preview') { linkPreview.close(); return; }
+  if (message.type === 'dismiss-selection-menu') { selectionMenu.close(); linkPreview.close(); return; }
   if (message.type === 'find' || message.type === 'close-find') {
     if (!hostToolbar || !activeDocument || activeDocument !== app.pdfDocument) return;
     if (message.type === 'close-find') {

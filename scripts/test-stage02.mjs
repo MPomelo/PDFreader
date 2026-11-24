@@ -321,8 +321,9 @@ test('actual bridge requires durable export acknowledgement and retains edits af
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const createSelectionMenu = () => ({ isOpen: false, close() {} });
   const createPreciseSelection = () => ({ current: null, setDocument() {} });
+  const createLinkPreview = () => ({ reset() {}, close() {} });
   const { AnnotationEditorType } = await import('../public/pdfjs/build/pdf.mjs');
-  await new AsyncFunction('app', 'options', 'AnnotationEditorType', 'expandLigatures', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'createPreciseSelection', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, AnnotationEditorType, expandLigatures, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, createPreciseSelection, window, document, parent, location, class {});
+  await new AsyncFunction('app', 'options', 'AnnotationEditorType', 'expandLigatures', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'createPreciseSelection', 'createLinkPreview', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, AnnotationEditorType, expandLigatures, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, createPreciseSelection, createLinkPreview, window, document, parent, location, class {});
   const send = async (type, extra = {}) => {
     const requestId = crypto.randomUUID();
     handlers.get('message')({ source: parent, origin: location.origin, data: { channel: 'pdfreader', documentId: 'document-one', requestId, type, ...extra } });

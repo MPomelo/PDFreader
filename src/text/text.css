@@ -18,7 +18,7 @@
 .preview-code .hljs-number, .preview-code .hljs-built_in, .preview-code .hljs-title { color: light-dark(#0057a5, #94c8ff); }
 .preview-code .hljs-comment, .preview-code .hljs-quote { color: var(--muted); }
 .network-image { display: inline-flex; font-size: 12px; border: 1px solid var(--border); vertical-align: middle; }
-.text-toolbar .command-menu, .new-document .command-menu { inset-inline: 0 auto; }
+.text-toolbar .command-menu { inset-inline: 0 auto; }
 .text-toolbar .text-modes button[aria-pressed="true"] { color: var(--accent); background: var(--hover); }
 .text-toolbar .text-modes { flex-wrap: wrap; height: auto; }
 .text-toolbar .toolbar-group button { gap: 5px; }

@@ -2,7 +2,7 @@
 from pathlib import Path
 import zlib
 from pypdf import PdfWriter, PdfReader
-from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, DecodedStreamObject
+from pypdf.generic import ArrayObject, DecodedStreamObject, Destination, DictionaryObject, Fit, NameObject, NumberObject, TextStringObject
 from pypdf.annotations import Link
 from PIL import Image, ImageDraw
 
@@ -139,3 +139,85 @@ page[NameObject('/Contents')] = scan._add_object(stream)
 with (root / 'scanned.pdf').open('wb') as file:
     scan.write(file)
 print(root)
+
+# Real PDF link annotations for hover preview, including an unloaded rotated destination.
+links = PdfWriter()
+link_font = links._add_object(DictionaryObject({
+    NameObject('/Type'): NameObject('/Font'),
+    NameObject('/Subtype'): NameObject('/Type1'),
+    NameObject('/BaseFont'): NameObject('/Helvetica'),
+}))
+
+def link_page(rows, drawing=''):
+    page = links.add_blank_page(width=612, height=792)
+    page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): link_font})})
+    data = DecodedStreamObject()
+    data.set_data((drawing + '\n' + '\n'.join(
+        f'BT /F1 {size} Tf {x} {y} Td ({text}) Tj ET' for size, x, y, text in rows
+    )).encode())
+    page[NameObject('/Contents')] = links._add_object(data)
+    return page
+
+link_page([
+    (16, 72, 740, 'Link preview fixture'),
+    (12, 72, 705, 'See Figure 3'), (12, 195, 705, '[12]'), (12, 252, 705, 'Table 2'),
+    (12, 72, 665, 'Exact box'), (12, 195, 665, 'Entire page'),
+    (12, 300, 665, 'External link'), (12, 428, 665, 'Broken destination'),
+    (12, 72, 630, 'Selectable words for copy and markup'),
+    (12, 72, 605, 'Next words for the search regression'),
+])
+link_page([
+    (12, 52, 660, 'Left prose beside the picture'), (12, 52, 645, 'Passage in the other column'),
+    (8, 350, 493, 'axis tick'),
+    (8, 415, 493, 'trial index'),
+    (10, 329, 475, 'Figure 3. Signal measured during trials.'),
+    (10, 329, 462, 'Each color shows a different trial.'),
+    (12, 52, 475, 'Unrelated narrow-column line'),
+    (12, 52, 460, 'Another unrelated line'),
+    (12, 329, 430, 'Text following the figure'),
+], '0.12 0.54 0.8 rg 329 498 225 153 re f\n0 g')
+link_page([
+    (14, 56, 732, 'References'),
+    (11, 55, 690, '[11] Earlier entry on the left.'),
+    (11, 55, 678, '       Continuation of the earlier entry.'),
+    (11, 55, 663, '[12] Mira Chen. Measurements across trials.'),
+    (11, 75, 650, 'Example Journal of PDF Studies, 2024.'),
+    (11, 55, 634, '[13] The next entry starts here.'),
+    (11, 322, 663, '[27] Different entry in the right column.'),
+    (11, 343, 650, 'And its continuation.'),
+])
+link_page([
+    (11, 68, 717, 'Table 2. Sample counts.'),
+    (10, 73, 671, 'Trial   Left   Right'),
+    (10, 73, 641, 'One     9      12'),
+    (10, 73, 611, 'Two     5      14'),
+    (12, 68, 545, 'Body text resumes below the table after a gap.'),
+], '.85 .85 .85 rg 68 590 195 96 re f\n0 g')
+rotated = link_page([(12, 75, 450, 'Inside the exact region')], '0.7 0.2 0.1 rg 72 410 220 130 re f\n0 g')
+rotated.cropbox.lower_left = (36, 36)
+rotated.cropbox.upper_right = (576, 756)
+rotated.rotate(90)
+link_page([(25, 72, 705, 'Whole page destination')])
+
+for rectangle, target, fit in [
+    ((72, 699, 145, 719), 1, Fit.xyz(left=329, top=492, zoom=None)),
+    ((252, 699, 300, 719), 3, Fit.fit_horizontally(top=725)),
+    ((72, 659, 133, 679), 4, Fit.fit_rectangle(left=72, bottom=410, right=292, top=540)),
+    ((195, 659, 262, 679), 5, Fit.fit()),
+]:
+    links.add_annotation(0, Link(rect=rectangle, target_page_index=target, fit=fit, border=[0, 0, 0]))
+
+def named_link(rectangle, name):
+    annotation = Link(rect=rectangle, target_page_index=0, border=[0, 0, 0])
+    annotation[NameObject('/Dest')] = TextStringObject(name)
+    links.add_annotation(0, annotation)
+
+links.add_named_destination_array(
+    TextStringObject('cite.chen'),
+    Destination(TextStringObject('cite.chen'), links.pages[2].indirect_reference,
+                Fit.xyz(left=55, top=672, zoom=None)).dest_array,
+)
+named_link((195, 699, 219, 719), 'cite.chen')
+named_link((428, 659, 525, 679), 'missing.target')
+links.add_annotation(0, Link(rect=(300, 659, 375, 679), url='https://example.invalid/', border=[0, 0, 0]))
+links.write(root / 'link-preview.pdf')

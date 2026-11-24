@@ -1,6 +1,6 @@
 {
   "name": "pdfreader",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "overrides": {
     "katex": "0.19.1"
@@ -23,7 +23,8 @@
     "test:workspace": "node --test scripts/test-workspace.mjs",
     "desktop:bundle": "node scripts/desktop.mjs bundle",
     "audit:public": "node scripts/audit-public.mjs",
-    "test:text-browser": "node scripts/verify-text-workspace.mjs"
+    "test:text-browser": "node scripts/verify-text-workspace.mjs",
+    "test:link-preview": "node scripts/verify-link-preview.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
