@@ -6,15 +6,15 @@ pub struct Batch { pub paths: Vec<String>, pub errors: Vec<String> }
 #[derive(Default)]
 pub struct IncomingPdfs(pub Mutex<Batch>);
 
-pub fn pdf_paths(args: impl IntoIterator<Item = String>, cwd: &Path) -> Vec<PathBuf> {
+pub fn document_paths(args: impl IntoIterator<Item = String>, cwd: &Path) -> Vec<PathBuf> {
     args.into_iter().skip(1).map(PathBuf::from)
-        .filter(|p| p.extension().and_then(|v| v.to_str()).is_some_and(|v| v.eq_ignore_ascii_case("pdf")))
+        .filter(|p| super::document_extension(p).is_some())
         .map(|p| if p.is_absolute() { p } else { cwd.join(p) }).collect()
 }
 
 pub fn enqueue(args: impl IntoIterator<Item = String>, cwd: &Path, incoming: &IncomingPdfs, allowed: &super::AllowedFiles) {
     let mut batch = incoming.0.lock().unwrap_or_else(|e| e.into_inner());
-    for path in pdf_paths(args, cwd) {
+    for path in document_paths(args, cwd) {
         match super::allow(path, allowed) {
             Ok(path) => batch.paths.push(path),
             Err(error) => batch.errors.push(error),
@@ -35,8 +35,8 @@ mod tests {
     #[test]
     fn launch_paths_preserve_unicode_spaces_and_resolve_against_sender_cwd() {
         let cwd = Path::new(r"D:\资料 目录");
-        let paths = pdf_paths(["reader.exe", "中文 文献.PDF", "--flag", "notes.txt", r"C:\other file.pdf"].map(String::from), cwd);
-        assert_eq!(paths, [cwd.join("中文 文献.PDF"), PathBuf::from(r"C:\other file.pdf")]);
+        let paths = document_paths(["reader.exe", "中文 文献.PDF", "--flag", "notes.txt", r"C:\other file.pdf"].map(String::from), cwd);
+        assert_eq!(paths, [cwd.join("中文 文献.PDF"), cwd.join("notes.txt"), PathBuf::from(r"C:\other file.pdf")]);
     }
     #[test]
     fn queued_launches_retain_valid_files_and_errors_until_drained() {

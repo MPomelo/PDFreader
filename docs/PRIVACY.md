@@ -2,7 +2,9 @@
 
 PDFreader does not include analytics, account login, cloud sync, or an application
 backend. PDF rendering, annotations, reading state, translation notes, and cache
-are local. WebView2 itself follows Microsoft's runtime behavior and update policy.
+are local. Markdown and TXT are read and saved on disk. Markdown attachments are
+kept next to the document in its `.assets` folder. A network image contacts its
+server when you click its load button. WebView2 itself follows Microsoft's runtime behavior and update policy.
 
 A translation action sends the selected text and configured prompt/glossary to
 the API endpoint you choose. The application does not upload the entire PDF for
@@ -23,7 +25,7 @@ document paths and selected text. Clearing translation cache does not delete
 notes. Uninstalling the app does not automatically erase this data.
 
 To back up local work, close PDFreader and copy the application data directory.
-Back up annotated PDF copies and exported Markdown separately. Credential Manager
+Back up annotated PDFs, Markdown with its `.assets` folder, and TXT files separately. Credential Manager
 keys are not included in that folder backup; re-enter them on another machine.
 For a complete manual removal, first export wanted notes, close the app, remove
 its local data, and delete its provider keys through Settings before uninstalling.

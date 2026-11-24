@@ -1,0 +1,30 @@
+.text-pane { display: flex; background: var(--panel); }
+.text-editor, .text-preview { flex: 1 1 0; min-width: 0; }
+.text-editor[hidden] { display: none; }
+.text-preview { overflow: auto; padding: 24px clamp(18px, 5vw, 72px); }
+.text-pane[data-mode="split"] .text-preview { border-inline-start: 1px solid var(--border); padding-inline: clamp(14px, 3vw, 40px); }
+.text-preview .markdown-body { color: var(--text); max-width: 880px; margin: 0 auto; }
+.text-preview .markdown-body h1 { font-size: 1.8em; }
+.text-preview .markdown-body h2 { font-size: 1.35em; }
+.text-preview .markdown-body p { min-width: 0; }
+.text-preview .markdown-body blockquote { color: var(--muted); border-color: var(--border); }
+.text-preview .markdown-body img { max-width: 100%; max-height: 75vh; object-fit: contain; }
+.text-preview .markdown-body pre, .text-preview .markdown-body th { background: var(--surface); }
+.preview-code { position: relative; margin: 12px 0; }
+.preview-code pre { margin: 0; padding-top: 36px; }
+.preview-code > button { position: absolute; inset: 5px 7px auto auto; min-height: 25px; font-size: 11px; background: var(--panel); border: 1px solid var(--border); }
+.preview-code .hljs-keyword, .preview-code .hljs-selector-tag, .preview-code .hljs-literal { color: light-dark(#752aa0, #d8a9ff); }
+.preview-code .hljs-string, .preview-code .hljs-regexp { color: light-dark(#136b3d, #9bd9a8); }
+.preview-code .hljs-number, .preview-code .hljs-built_in, .preview-code .hljs-title { color: light-dark(#0057a5, #94c8ff); }
+.preview-code .hljs-comment, .preview-code .hljs-quote { color: var(--muted); }
+.network-image { display: inline-flex; font-size: 12px; border: 1px solid var(--border); vertical-align: middle; }
+.text-toolbar .command-menu, .new-document .command-menu { inset-inline: 0 auto; }
+.text-toolbar .text-modes button[aria-pressed="true"] { color: var(--accent); background: var(--hover); }
+.text-toolbar .text-modes { flex-wrap: wrap; height: auto; }
+.text-toolbar .toolbar-group button { gap: 5px; }
+.text-editor .cm-panel.cm-search { padding: 8px 24px 6px 8px; }
+.text-editor .cm-panel.cm-search input { font: inherit; }
+.text-editor .cm-panel.cm-search input[main-field], .text-editor .cm-panel.cm-search .cm-textfield { width: min(150px, 40%); }
+.text-editor .cm-panel.cm-search button { display: inline-flex; min-height: 26px; }
+.text-encoding-dialog label { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.text-encoding-dialog select { color: var(--text); background: var(--panel); border: 1px solid var(--border); padding: 5px; }

@@ -9,6 +9,7 @@ mod translation;
 mod local;
 mod launch;
 mod poppler;
+mod text;
 
 #[derive(Default)]
 struct AllowedFiles(Mutex<HashSet<PathBuf>>);
@@ -31,10 +32,15 @@ fn finish_close(window: tauri::WebviewWindow) -> Result<(), String> {
     window.destroy().map_err(|e| e.to_string())
 }
 
+fn document_extension(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?;
+    ["pdf", "txt", "md", "markdown"].into_iter().find(|kind| extension.eq_ignore_ascii_case(kind))
+}
+
 fn allow(path: PathBuf, state: &AllowedFiles) -> Result<String, String> {
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-    if !path.is_file() || !path.extension().and_then(|v| v.to_str()).is_some_and(|v| v.eq_ignore_ascii_case("pdf")) {
-        return Err("请选择 PDF 文件".into());
+    if !path.is_file() || document_extension(&path).is_none() {
+        return Err("请选择 PDF、Markdown 或 TXT 文件".into());
     }
     state.0.lock().map_err(|e| e.to_string())?.insert(path.clone());
     Ok(path.to_string_lossy().into_owned())
@@ -48,8 +54,9 @@ async fn choose_pdf(state: tauri::State<'_, AllowedFiles>) -> Result<Option<Stri
     candidate.map(|path| allow(path, &state)).transpose()
 }
 #[tauri::command]
-async fn choose_pdfs(state: tauri::State<'_, AllowedFiles>) -> Result<Vec<String>, String> {
-    let candidates = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_files())
+async fn choose_documents(state: tauri::State<'_, AllowedFiles>) -> Result<Vec<String>, String> {
+    let candidates = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().add_filter("文档", &["pdf", "md", "markdown", "txt"])
+        .add_filter("PDF", &["pdf"]).add_filter("Markdown", &["md", "markdown"]).add_filter("TXT", &["txt"]).pick_files())
         .await.map_err(|error| error.to_string())?.unwrap_or_default();
     candidates.into_iter().map(|path| allow(path, &state)).collect()
 }
@@ -63,6 +70,7 @@ fn startup_pdf(state: tauri::State<AllowedFiles>) -> Result<Option<String>, Stri
 fn read_pdf(path: String, state: tauri::State<AllowedFiles>) -> Result<OpenedPdf, String> {
     let path = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
     if !state.0.lock().map_err(|e| e.to_string())?.contains(&path) { return Err("文件未经打开操作授权".into()); }
+    if document_extension(&path) != Some("pdf") { return Err("请选择 PDF 文件".into()); }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     if !bytes.starts_with(b"%PDF-") { return Err("文件不是有效的 PDF".into()); }
     Ok(OpenedPdf { name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: path.to_string_lossy().into_owned(), bytes })
@@ -89,7 +97,7 @@ async fn native_page_layout(path: String, fingerprint: String, page: u32, state:
 fn main() {
     use tauri::{Emitter, Manager};
     tauri::Builder::default().manage(AllowedFiles::default()).manage(launch::IncomingPdfs::default())
-        .manage(translation::ApiState::default()).manage(local::LocalState::default())
+        .manage(text::TextFiles::default()).manage(translation::ApiState::default()).manage(local::LocalState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             launch::enqueue(args, std::path::Path::new(&cwd), &app.state::<launch::IncomingPdfs>(), &app.state::<AllowedFiles>());
             let _ = app.emit("pdfs-queued", ());
@@ -102,8 +110,9 @@ fn main() {
             launch::enqueue(std::env::args(), &cwd, &app.state::<launch::IncomingPdfs>(), &app.state::<AllowedFiles>());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![choose_pdf, choose_pdfs, startup_pdf, launch::startup_pdfs, read_pdf, export_pdf, finish_close,
-            native_page_layout,
+        .invoke_handler(tauri::generate_handler![choose_pdf, choose_documents, startup_pdf, launch::startup_pdfs, read_pdf, export_pdf, finish_close,
+            native_page_layout, text::read_text, text::choose_text_destination, text::save_text,
+            text::store_text_image, text::read_text_image, text::read_dropped_image,
             local::local_read, local::local_write, local::local_recover, local::reopen_pdf, local::export_notes,
             translation::api_load, translation::api_save, translation::api_secret_status,
             translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel])
@@ -113,13 +122,27 @@ fn main() {
                 api.prevent_close();
                 let _ = window.emit("close-requested", ());
             }
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position, .. }) = event {
                 let mut opened = Vec::new();
+                let mut images = Vec::new();
                 for path in paths {
-                    match allow(path.clone(), &window.state::<AllowedFiles>()) {
-                        Ok(path) => opened.push(path),
-                        Err(message) => { let _ = window.emit("pdf-open-error", message); }
+                    if text::image_mime(path).is_some() {
+                        match text::allow_drop(path.clone(), &window.state::<text::TextFiles>()) {
+                            Ok(path) => images.push(path),
+                            Err(message) => { let _ = window.emit("pdf-open-error", message); }
+                        }
+                    } else {
+                        match allow(path.clone(), &window.state::<AllowedFiles>()) {
+                            Ok(path) => opened.push(path),
+                            Err(message) => { let _ = window.emit("pdf-open-error", message); }
+                        }
                     }
+                }
+                if !images.is_empty() {
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    let _ = window.emit("images-dropped", serde_json::json!({
+                        "paths": images, "x": position.x / scale, "y": position.y / scale
+                    }));
                 }
                 if !opened.is_empty() { let _ = window.emit("pdfs-dropped", opened); }
             }

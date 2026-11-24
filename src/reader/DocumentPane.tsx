@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ReaderAdapter, type NativePageLayout, type ReaderEvent, type ReaderState } from './ReaderAdapter';
 import type { Accent, ColorScheme } from '../ui/appearance';
-export type DocumentTab = { id: string; name: string; path: string; fingerprint: string; bytes?: Uint8Array; initialPage: number; initialZoom: string; state: ReaderState | null; error?: string };
-export function DocumentPane({ tab, active, theme, accent, selectionToolbar, register, onEvent, onOpened }: { tab: DocumentTab; active: boolean; theme: ColorScheme; accent: Accent; selectionToolbar: boolean; register: (id: string, adapter: ReaderAdapter | null) => void; onEvent: (id: string, event: ReaderEvent) => void; onOpened: (id: string, state?: ReaderState, error?: string) => void }) {
+export type PdfTab = { kind: 'pdf'; id: string; name: string; path: string; fingerprint: string; bytes?: Uint8Array; initialPage: number; initialZoom: string; state: ReaderState | null; error?: string };
+export function DocumentPane({ tab, active, theme, accent, selectionToolbar, register, onEvent, onOpened }: { tab: PdfTab; active: boolean; theme: ColorScheme; accent: Accent; selectionToolbar: boolean; register: (id: string, adapter: ReaderAdapter | null) => void; onEvent: (id: string, event: ReaderEvent) => void; onOpened: (id: string, state?: ReaderState, error?: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null), adapter = useRef<ReaderAdapter | null>(null);
   const events = useRef(onEvent), opened = useRef(onOpened); events.current = onEvent; opened.current = onOpened;
   useEffect(() => {

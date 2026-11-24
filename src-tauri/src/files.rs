@@ -21,7 +21,11 @@ pub fn export_target(target: &Path, originals: &[PathBuf]) -> Result<PathBuf, St
 
 pub fn atomic_export(target: &Path, bytes: &[u8]) -> Result<(), String> {
     if !bytes.starts_with(b"%PDF-") { return Err("导出数据不是有效的 PDF，未写入文件。".into()); }
-    let parent = target.parent().ok_or("导出目录无效")?;
+    atomic_write_checked(target, bytes, || Ok(()))
+}
+
+pub fn atomic_write_checked(target: &Path, bytes: &[u8], check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let parent = target.parent().ok_or("保存目录无效")?;
     let mut temporary = None;
     for _ in 0..100 {
         let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
@@ -29,20 +33,21 @@ pub fn atomic_export(target: &Path, bytes: &[u8]) -> Result<(), String> {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => { temporary = Some((path, file)); break; }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("无法创建导出临时文件：{error}")),
+            Err(error) => return Err(format!("无法创建保存临时文件：{error}")),
         }
     }
     let (path, mut file) = temporary.ok_or("无法创建唯一的导出临时文件")?;
     let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
+        let write = file.write_all(bytes).and_then(|()| file.sync_all());
         drop(file);
+        write.map_err(|error| format!("写入失败，修改仍未保存：{error}"))?;
+        check()?;
         // Same-volume rename atomically replaces a confirmed destination.
-        fs::rename(&path, target)
+        fs::rename(&path, target).map_err(|error| format!("保存失败，修改仍未保存：{error}"))
     })();
     if let Err(error) = result {
         let _ = fs::remove_file(&path);
-        return Err(format!("导出失败，修改仍未保存：{error}"));
+        return Err(error);
     }
     Ok(())
 }
