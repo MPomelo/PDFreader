@@ -152,15 +152,22 @@ try {
   await content.press('Control+Enter');
   await expect(textSettings).toBeHidden();
   await expect(button('编辑文本框', panel)).toBeVisible();
+  // With page-width zoom, showing the contextual row doesn't rescale the page
+  // between measuring the drag handle and delivering the pointer gesture.
+  await page.getByRole('combobox', { name: '缩放' }).selectOption('page-width');
+  await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue)).toBe('page-width');
   await box.click();
   await expect(textSettings).toBeVisible();
-  const previousPosition = await box.boundingBox();
-  const grip = await box.locator('.move-box').boundingBox();
+  const moveHandle = box.locator('.move-box');
+  await moveHandle.hover();
+  const pdfX = async () => (await annotationStorage()).find(mark => mark.pdfreaderBoxWidth)?.rect[0] ?? -Infinity;
+  const previousPosition = await pdfX();
+  const grip = await moveHandle.boundingBox();
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   await page.mouse.down();
   await page.mouse.move(grip.x + grip.width / 2 + 22, grip.y + grip.height / 2, { steps: 8 });
   await page.mouse.up();
-  await expect.poll(async () => (await box.boundingBox()).x).toBeGreaterThan(previousPosition.x + 12);
+  await expect.poll(pdfX).toBeGreaterThan(previousPosition + 7);
   await button('完成', textSettings).click();
   await expect(textSettings).toBeHidden();
   await button('删除文本框', panel).click();
@@ -220,12 +227,13 @@ try {
   execFileSync('python', ['scripts/inspect-annotation-workspace.py', original, firstExport, secondExport], { stdio: 'inherit' });
 
   await button('关闭批注侧栏', panel).click();
+  await page.getByRole('combobox', { name: '缩放' }).selectOption('page-fit');
   await button('阅读工具', toolbar).click();
   await button('旋转页面', toolbar).click();
   await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.pagesRotation)).toBe(90);
   await menu('添加文本框');
   await expect(textSettings).toBeVisible();
-  await expect(editorLayer).toBeVisible();
+  await editorLayer.hover();
   const rotatedPage = await editorLayer.boundingBox();
   const hit = { x: rotatedPage.x + rotatedPage.width - 4, y: rotatedPage.y + 54 };
   await page.mouse.click(hit.x, hit.y);
