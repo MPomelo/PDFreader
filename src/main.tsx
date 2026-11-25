@@ -14,6 +14,7 @@ import { ResizeHandle } from './ui/ResizeHandle';
 import { DEFAULT_WIDTHS, WIDTHS_KEY, panelLayout, parseWidths } from './ui/panel-widths';
 import { SettingsDialog, type SettingsSection } from './ui/SettingsDialog';
 import { DocumentToolbar } from './ui/DocumentToolbar';
+import { TextBoxToolbar } from './ui/TextBoxToolbar';
 import { AnnotationPanel } from './ui/AnnotationPanel';
 import { WindowControls } from './ui/WindowControls';
 import { DEFAULT_ACCENT, type Accent, type ColorScheme, type ThemeMode } from './ui/appearance';
@@ -77,6 +78,7 @@ function App() {
   const [preferredWidths, setPreferredWidths] = useState(() => { try { return parseWidths(localStorage.getItem(WIDTHS_KEY)); } catch { return DEFAULT_WIDTHS; } });
   const active = tabs.find(tab => tab.id === activeId) || null;
   const reader = active?.kind === 'pdf' ? active.state : null;
+  const textBoxStyle = reader?.textBox;
   const text = active && active.kind !== 'pdf' ? active : null;
   const citationTab = tabs.find(tab => tab.id === citationId), citationAdapter = panes.current.get(citationId);
   const widths = panelLayout(preferredWidths, viewport, left && !reading, right && !reading && !floating && !text);
@@ -453,6 +455,9 @@ function App() {
       onMode={mode=>patchText(text.id,{mode})} onImage={()=>imageInput.current?.click()}
       onUtf8={()=>patchText(text.id,{encoding:'UTF-8',bom:false})} onSettings={()=>openSettings()} />
       : <DocumentToolbar reader={reader} findAdapter={panes.current.get(activeId)} findModal={settingsOpen||!!prompt||!!citationTab} busy={!!operation} left={left} right={right&&!floating&&!!active} reading={reading} onOpen={()=>{void choose();}} onExport={()=>{void runOperation('exporting',()=>exportTab(activeId));}} onLeft={()=>{void action('hide-navigation');setReading(false);const showingAnnotations=annotationTab===activeId&&!!reader;setAnnotationTab('');setLeft(value=>showingAnnotations||!value);}} onRight={()=>{setReading(false);if(floating){setFloating(false);setRight(true);}else setRight(value=>!value);}} onReading={()=>{void action('hide-navigation');setReading(value=>!value);}} onSettings={()=>openSettings()} onCitation={()=>openCitation()} onAction={value=>{void action(value);}} onPosition={(page,zoom)=>{void position(page,zoom);}} onComment={()=>{void panes.current.get(activeId)?.commentSelection().catch(error=>setError(String(error)));}} onComments={()=>{void panes.current.get(activeId)?.showComments().catch(error=>setError(String(error)));}} />}
+    {textBoxStyle && <TextBoxToolbar key={activeId} value={textBoxStyle} busy={!!operation}
+      onChange={change=>{void panes.current.get(activeId)?.updateTextBoxStyle(textBoxStyle.target,change).catch(error=>setError(String(error)));}}
+      onDone={()=>{void action('finish-text-box');}} />}
     <input ref={input} type="file" multiple accept={acceptDocuments} hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';if(files.length)void fileOpen(files);}} />
     {text?.kind === 'markdown' && isTauri() && <input ref={imageInput} type="file" multiple accept="image/*,.svg,.avif,.ico" hidden onChange={event=>{
       const files = [...(event.target.files ?? [])]; event.target.value = '';

@@ -25,8 +25,12 @@ for path, note, textbox in [
     assert entries['/Text']['/Contents'] == note, entries['/Text'].get('/Contents')
     box = entries['/FreeText']
     assert box['/Contents'] == textbox, box.get('/Contents')
-    assert b'BI /W' in box['/AP']['/N'].get_data()
-    assert b'/IM true' in box['/AP']['/N'].get_data()
+    appearance = box['/AP']['/N'].get_data()
+    assert b'BI /W' in appearance and b'/IM true' in appearance
+    white_background = path == exported
+    assert bool(box.get('/PDFreaderTextBoxBackground')) == white_background
+    assert (b'1 g\n' in appearance and b' re f\n' in appearance) == white_background
+    assert b'12 Tf' in str(box['/DA']).encode()
     assert abs(float(box['/Rect'][2] - box['/Rect'][0]) - 90) < 2, box['/Rect']
     position = (float(box['/Rect'][0]), float(box['/Rect'][3]))
     if path == exported:

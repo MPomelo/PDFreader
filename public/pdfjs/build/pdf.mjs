@@ -27,6 +27,7 @@
 import { createNoteEditor } from "../web/note-editor.mjs";
 import { lineMarkupBoxes } from "../web/markup-appearance.mjs";
 import { textBoxFont } from "../web/textbox-appearance.mjs";
+import { bindTextBoxResize } from "../web/textbox-handles.mjs";
 
 ;// ./src/shared/util.js
 const isNodeJS = typeof process === "object" && process + "" === "[object process]" && !process.versions.nw && !(process.versions.electron && process.type && process.type !== "browser");
@@ -2977,7 +2978,7 @@ class AnnotationEditorUIManager {
   onScaleChanging({
     scale
   }) {
-    this.commitOrRemove();
+    if (!this.pdfreaderTextBoxInEditMode()) this.commitOrRemove();
     this.viewParameters.realScale = scale * PixelsPerInch.PDF_TO_CSS_UNITS;
     for (const editor of this.#editorsToRescale) {
       editor.onScaleChanging();
@@ -3859,6 +3860,39 @@ class AnnotationEditorUIManager {
   }
   pdfreaderEditors() {
     return Array.from(this.#allEditors.values()).filter(editor => !editor.deleted && !editor.isEmpty());
+  }
+  pdfreaderTextPlacement = false;
+  #pdfreaderTextBoxTarget() {
+    const editor = this.#activeEditor || this.#lastSelectedEditor;
+    return editor instanceof FreeTextEditor && !editor.deleted ? editor : null;
+  }
+  pdfreaderTextBoxStyle() {
+    const editor = this.#pdfreaderTextBoxTarget();
+    if (!this.pdfreaderTextPlacement && !editor) return null;
+    return editor?.pdfreaderStyle || FreeTextEditor.pdfreaderDefaults;
+  }
+  pdfreaderTextBoxInEditMode() {
+    const editor = this.#pdfreaderTextBoxTarget();
+    return editor?.isInEditMode() && document.documentElement.classList.contains("pdfreader-host-toolbar") ? editor : null;
+  }
+  pdfreaderFinishTextBox() {
+    this.pdfreaderTextPlacement = false;
+    const editor = this.#pdfreaderTextBoxTarget();
+    if (editor?.isInEditMode()) editor.commitOrRemove();
+  }
+  pdfreaderSetTextBoxStyle(target, property, value) {
+    const editor = this.#pdfreaderTextBoxTarget();
+    if (target !== (editor?.id ?? null) || !editor && !this.pdfreaderTextPlacement) return;
+    const style = editor?.pdfreaderStyle || FreeTextEditor.pdfreaderDefaults;
+    if (style[property === "background" ? "whiteBackground" : property] === value) return;
+    if (property === "background") {
+      if (editor) editor.pdfreaderSetWhiteBackground(value);
+      else FreeTextEditor.pdfreaderDefaultWhiteBackground = value;
+    } else {
+      const type = property === "size" ? AnnotationEditorParamsType.FREETEXT_SIZE : AnnotationEditorParamsType.FREETEXT_COLOR;
+      if (editor) editor.updateParams(type, value);
+      else FreeTextEditor.updateDefaultParams(type, value);
+    }
   }
   pdfreaderHistory() {
     return { undo: this.#commandManager.hasSomethingToUndo(), redo: this.#commandManager.hasSomethingToRedo() };
@@ -21179,6 +21213,24 @@ class FreeTextAnnotationElement extends AnnotationElement {
   }
   render() {
     this.container.classList.add("freeTextAnnotation");
+    const hostTextBox = this.data.pdfreaderTextBox && document.documentElement.classList.contains("pdfreader-host-toolbar");
+    if (hostTextBox && this.data.isEditable && !(this.data.annotationFlags & (0x40 | 0x80 | 0x200))) {
+      this.container.classList.add("pdfreader-saved-text-box");
+      let selectTimer;
+      this.container.addEventListener("click", event => {
+        if (event.button !== 0 || event.detail > 1) return;
+        // A double-click should reach the original PDF annotation before
+        // selection swaps it for an editor element.
+        clearTimeout(selectTimer);
+        selectTimer = setTimeout(() => {
+          if (!this.container.isConnected || this.container.hidden) return;
+          this.linkService.eventBus.dispatch("switchannotationeditormode", {
+            source: this, mode: AnnotationEditorType.FREETEXT, editId: this.data.id
+          });
+        }, 260);
+      });
+      this.container.addEventListener("dblclick", () => clearTimeout(selectTimer));
+    }
     if (this.textContent) {
       const content = this.contentElement = document.createElement("div");
       content.classList.add("annotationTextContent");
@@ -21190,7 +21242,7 @@ class FreeTextAnnotationElement extends AnnotationElement {
       }
       this.container.append(content);
     }
-    if (!this.data.popupRef && this.hasPopupData) {
+    if (!hostTextBox && !this.data.popupRef && this.hasPopupData) {
       this.hasOwnCommentButton = true;
       this._createPopup();
     }
@@ -22226,10 +22278,31 @@ const EOL_PATTERN = /\r\n?|\n/g;
 class FreeTextEditor extends AnnotationEditor {
   #content = "";
   #boxWidth = 0;
+  #whiteBackground = false;
+  static pdfreaderDefaultWhiteBackground = false;
+  static get pdfreaderDefaults() {
+    return { target: null, size: this._defaultFontSize, color: this._defaultColor || AnnotationEditor._defaultLineColor,
+      whiteBackground: this.pdfreaderDefaultWhiteBackground };
+  }
+  get pdfreaderStyle() {
+    return { target: this.id, size: this.#fontSize, color: this.color, whiteBackground: this.#whiteBackground };
+  }
+  pdfreaderSetWhiteBackground(value) {
+    const previous = this.#whiteBackground;
+    if (value === previous) return;
+    const apply = next => {
+      this.#whiteBackground = next;
+      this.#applyBackground();
+      this.addToAnnotationStorage();
+    };
+    this.addCommands({ cmd: () => apply(value), undo: () => apply(previous), mustExec: true });
+  }
+  #applyBackground() {
+    this.div.classList.toggle("pdfreader-text-box-white", this.#whiteBackground);
+  }
   get pdfreaderText() { return this.#serializeContent(); }
   get pdfreaderBoxWidth() { return this.#boxWidth; }
   pdfreaderResize(width) {
-    this.commit();
     const previous = this.#boxWidth;
     if (!previous || previous === width) return;
     const apply = width => {
@@ -22297,6 +22370,7 @@ class FreeTextEditor extends AnnotationEditor {
     this.color = params.color || FreeTextEditor._defaultColor || AnnotationEditor._defaultLineColor;
     this.#fontSize = params.fontSize || FreeTextEditor._defaultFontSize;
     this.#boxWidth = params.pdfreaderBoxWidth || 0;
+    this.#whiteBackground = !!this.#boxWidth && FreeTextEditor.pdfreaderDefaultWhiteBackground;
     if (!this.annotationElementId) {
       this._uiManager.a11yAlert(AnnotationEditor._l10nAlert.freetext);
     }
@@ -22343,7 +22417,7 @@ class FreeTextEditor extends AnnotationEditor {
   #updateFontSize(fontSize) {
     const setFontsize = size => {
       this.editorDiv.style.fontSize = `calc(${size}px * var(--total-scale-factor))`;
-      this.translate(0, -(size - this.#fontSize) * this.parentScale);
+      if (!this.#boxWidth) this.translate(0, -(size - this.#fontSize) * this.parentScale);
       this.#fontSize = size;
       this.#setEditorDimensions();
     };
@@ -22406,6 +22480,7 @@ class FreeTextEditor extends AnnotationEditor {
     if (!super.enableEditMode()) {
       return false;
     }
+    this.div.classList.add("pdfreader-text-box-editing");
     this.overlayDiv.classList.remove("enabled");
     this.editorDiv.contentEditable = true;
     this._isDraggable = false;
@@ -22433,6 +22508,7 @@ class FreeTextEditor extends AnnotationEditor {
     if (!super.disableEditMode()) {
       return false;
     }
+    this.div.classList.remove("pdfreader-text-box-editing");
     this.overlayDiv.classList.add("enabled");
     this.editorDiv.contentEditable = false;
     this.div.setAttribute("aria-activedescendant", this.#editorDivId);
@@ -22451,9 +22527,32 @@ class FreeTextEditor extends AnnotationEditor {
       return;
     }
     super.focusin(event);
+    if (event.target.closest?.(".pdfreader-text-box-handle")) return;
     if (event.target !== this.editorDiv) {
       this.editorDiv.focus();
     }
+  }
+  focusout(event) {
+    if (!event.relatedTarget && this.div.classList.contains("pdfreader-text-box-editing") &&
+        document.documentElement.classList.contains("pdfreader-host-toolbar") && window.parent !== window) {
+      // A host form control has no iframe-local relatedTarget. Wait for its focus
+      // before committing an empty editor or ending the current input session.
+      setTimeout(() => {
+        const hostFocus = window.parent.document.activeElement;
+        if (hostFocus?.closest("[data-pdfreader-text-toolbar]")) return;
+        if (hostFocus === window.frameElement) {
+          // Reflowing the dock can temporarily detach the editor within the iframe.
+          if (this.isInEditMode() && this.isAttachedToDOM &&
+              this._uiManager.firstSelectedEditor === this && document.activeElement === document.body) {
+            this.editorDiv.focus({ preventScroll: true });
+          }
+          return;
+        }
+        super.focusout(event);
+      }, 0);
+      return;
+    }
+    super.focusout(event);
   }
   onceAdded(focus) {
     if (this.width) {
@@ -22467,6 +22566,7 @@ class FreeTextEditor extends AnnotationEditor {
       this.center();
     }
     this._initialOptions = null;
+    if (this.#boxWidth) this.#setEditorDimensions();
   }
   isEmpty() {
     return !this.editorDiv || this.editorDiv.innerText.trim() === "";
@@ -22567,6 +22667,7 @@ class FreeTextEditor extends AnnotationEditor {
     }
   }
   editorDivKeydown(event) {
+    if (event.isComposing || event.keyCode === 229) return;
     FreeTextEditor._keyboardManager.exec(this, event);
   }
   editorDivFocus(event) {
@@ -22613,6 +22714,27 @@ class FreeTextEditor extends AnnotationEditor {
     style.color = this.color;
     this.div.append(this.editorDiv);
     this.#applyBoxWidth();
+    this.#applyBackground();
+    if (this.#boxWidth && document.documentElement.classList.contains("pdfreader-host-toolbar")) {
+      const signal = this._uiManager._signal;
+      const resize = document.createElement("button");
+      resize.type = "button";
+      resize.className = "pdfreader-text-box-handle resize-width";
+      resize.setAttribute("aria-label", "拖动或按方向键调整宽度");
+      bindTextBoxResize(resize, this, signal, width => {
+        this.div.style.width = `calc(${width}px * var(--total-scale-factor))`;
+      }, width => this.pdfreaderResize(width));
+      const move = document.createElement("span");
+      move.className = "pdfreader-text-box-handle move-box";
+      move.setAttribute("aria-hidden", "true");
+      move.addEventListener("pointerdown", event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        this.commit();
+        this.parent.setSelected(this);
+      }, { signal });
+      this.div.append(resize, move);
+    }
     this.overlayDiv = document.createElement("div");
     this.overlayDiv.classList.add("overlay", "enabled");
     this.div.append(this.overlayDiv);
@@ -22793,6 +22915,7 @@ class FreeTextEditor extends AnnotationEditor {
       if (!textContent?.length) {
         return null;
       }
+      const pdfreaderWhiteBackground = data.data.pdfreaderWhiteBackground;
       const pdfreaderBoxWidth = data.data.pdfreaderTextBox
         ? (rotation % 180 ? rect[3] - rect[1] : rect[2] - rect[0]) : 0;
       initialData = data = {
@@ -22801,6 +22924,7 @@ class FreeTextEditor extends AnnotationEditor {
         fontSize,
         value: textContent.join("\n"),
         pdfreaderBoxWidth,
+        pdfreaderWhiteBackground,
         position: textPosition,
         pageIndex: pageNumber - 1,
         rect: rect.slice(0),
@@ -22818,6 +22942,7 @@ class FreeTextEditor extends AnnotationEditor {
     const editor = await super.deserialize(data, parent, uiManager);
     editor.#fontSize = data.fontSize;
     editor.#boxWidth = data.pdfreaderBoxWidth || 0;
+    editor.#whiteBackground = data.pdfreaderWhiteBackground === true;
     if (editor.#boxWidth && data.annotationElementId) {
       const [pageX, pageY] = editor.pageTranslation;
       const [pageWidth, pageHeight] = editor.pageDimensions;
@@ -22844,7 +22969,8 @@ class FreeTextEditor extends AnnotationEditor {
       color,
       fontSize: this.#fontSize,
       value: this.#serializeContent(),
-      ...(this.#boxWidth ? { pdfreaderBoxWidth: this.#boxWidth } : null)
+      ...(this.#boxWidth ? { pdfreaderBoxWidth: this.#boxWidth } : null),
+      ...(this.#whiteBackground ? { pdfreaderWhiteBackground: true } : null)
     });
     this.addComment(serialized);
     if (isForCopying) {
@@ -22864,7 +22990,8 @@ class FreeTextEditor extends AnnotationEditor {
       color,
       pageIndex
     } = this._initialData;
-    return this.hasEditedComment || this._hasBeenMoved || (serialized.pdfreaderBoxWidth || 0) !== this._initialData.pdfreaderBoxWidth || serialized.value !== value || serialized.fontSize !== fontSize || serialized.color.some((c, i) => c !== color[i]) || serialized.pageIndex !== pageIndex;
+    return this.hasEditedComment || this._hasBeenMoved ||
+      this.#whiteBackground !== !!this._initialData.pdfreaderWhiteBackground || (serialized.pdfreaderBoxWidth || 0) !== this._initialData.pdfreaderBoxWidth || serialized.value !== value || serialized.fontSize !== fontSize || serialized.color.some((c, i) => c !== color[i]) || serialized.pageIndex !== pageIndex;
   }
   renderAnnotationElement(annotation) {
     const content = super.renderAnnotationElement(annotation);
@@ -22876,6 +23003,12 @@ class FreeTextEditor extends AnnotationEditor {
     } = content;
     style.fontSize = `calc(${this.#fontSize}px * var(--total-scale-factor))`;
     style.color = this.color;
+    style.backgroundColor = this.#whiteBackground ? "#fff" : "";
+    if (this.#boxWidth) {
+      style.fontFamily = textBoxFont;
+      style.whiteSpace = "pre-wrap";
+      style.overflowWrap = "anywhere";
+    }
     content.replaceChildren();
     for (const line of this.#content.split("\n")) {
       const div = document.createElement("div");
@@ -28499,6 +28632,11 @@ class AnnotationEditorLayer {
     if (this.#currentEditorType?.isDrawer && this.#currentEditorType.supportMultipleDrawings) {
       return;
     }
+    if (this.#uiManager.getMode() === AnnotationEditorType.FREETEXT && event.type === "pointerup" &&
+        document.documentElement.classList.contains("pdfreader-host-toolbar") && !this.#uiManager.pdfreaderTextPlacement) {
+      this.#uiManager._eventBus.dispatch("pdfreadertextdismiss");
+      return;
+    }
     if (!this.#allowClick) {
       this.#allowClick = true;
       return;
@@ -28510,17 +28648,33 @@ class AnnotationEditorLayer {
     }
     const start = this.pdfreaderTextBoxStart;
     this.pdfreaderTextBoxStart = null;
+    if (start && event.type !== "pointerup") return;
     if (start && currentMode === AnnotationEditorType.FREETEXT) {
-      const delta = event.clientX - start.clientX;
-      const maxWidth = (start.bounds.right - Math.min(start.clientX, event.clientX)) / this.scale;
+      const bounds = start.bounds;
+      const x = MathClamp(event.clientX, bounds.left, bounds.right);
+      const delta = x - start.clientX;
+      const left = Math.min(start.clientX, x);
+      const maxWidth = (bounds.right - left) / this.scale;
       const width = Math.max(12, Math.min(maxWidth, Math.abs(delta) > 6 ? Math.abs(delta) / this.scale : 180));
-      this.createAndAddNewEditor({
-        offsetX: Math.min(start.offsetX, event.offsetX), offsetY: Math.min(start.offsetY, event.offsetY)
-      }, false, { pdfreaderBoxWidth: width });
+      // Derive the origin from screen coordinates, using the layer's transform
+      // to convert the horizontal drag back into its local coordinates.
+      const top = MathClamp(Math.min(start.clientY, event.clientY), bounds.top, bounds.bottom);
+      const [offsetX, offsetY] = this.pdfreaderTextBoxOffset(start, left, top);
+      this.#uiManager.pdfreaderTextPlacement = false;
+      this.createAndAddNewEditor({ offsetX, offsetY }, false, { pdfreaderBoxWidth: width });
       return;
     }
     this.createAndAddNewEditor(event, false, currentMode === AnnotationEditorType.FREETEXT &&
       document.documentElement.classList.contains("pdfreader-host-toolbar") ? { pdfreaderBoxWidth: 180 } : {});
+  }
+  pdfreaderTextBoxOffset(start, left, top) {
+    const dx = left - start.clientX, dy = top - start.clientY;
+    switch (this.viewport.rotation % 360) {
+      case 90: return [start.offsetX + dy, start.offsetY - dx];
+      case 180: return [start.offsetX - dx, start.offsetY - dy];
+      case 270: return [start.offsetX - dy, start.offsetY + dx];
+      default: return [start.offsetX + dx, start.offsetY + dy];
+    }
   }
   pointerdown(event) {
     if (this.#uiManager.getMode() === AnnotationEditorType.HIGHLIGHT) {
@@ -28541,10 +28695,11 @@ class AnnotationEditorLayer {
     }
     this.#hadPointerDown = true;
     this.pdfreaderTextBoxStart = null;
-    if (this.#uiManager.getMode() === AnnotationEditorType.FREETEXT &&
+    if (this.#uiManager.getMode() === AnnotationEditorType.FREETEXT && this.#uiManager.pdfreaderTextPlacement &&
         document.documentElement.classList.contains("pdfreader-host-toolbar")) {
-      const { clientX, offsetX, offsetY } = event;
-      this.pdfreaderTextBoxStart = { clientX, offsetX, offsetY, bounds: this.div.getBoundingClientRect() };
+      const { clientX, clientY, offsetX, offsetY } = event;
+      this.pdfreaderTextBoxStart = { clientX, clientY, offsetX, offsetY, bounds: this.div.getBoundingClientRect() };
+      this.div.setPointerCapture(event.pointerId);
     }
     if (this.#currentEditorType?.isDrawer) {
       this.startDrawingSession(event);
@@ -28644,9 +28799,9 @@ class AnnotationEditorLayer {
     this.#editors.clear();
     this.#uiManager.removeLayer(this);
   }
-  #cleanup() {
+  #cleanup(keepEditor = null) {
     for (const editor of this.#editors.values()) {
-      if (editor.isEmpty()) {
+      if (editor !== keepEditor && editor.isEmpty()) {
         editor.remove();
       }
     }
@@ -28667,10 +28822,12 @@ class AnnotationEditorLayer {
   update({
     viewport
   }) {
-    this.#uiManager.commitOrRemove();
-    this.#cleanup();
     const oldRotation = this.viewport.rotation;
     const rotation = viewport.rotation;
+    const keepEditor = oldRotation === rotation ? this.#uiManager.pdfreaderTextBoxInEditMode() : null;
+    // Opening the host toolbar can change page-fit zoom while editing.
+    if (!keepEditor) this.#uiManager.commitOrRemove();
+    this.#cleanup(keepEditor);
     this.viewport = viewport;
     setLayerDimensions(this.div, {
       rotation
@@ -29465,3 +29622,5 @@ export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, Anno
 // PDFreader text markup patch
 
 // PDFreader annotation workspace patch
+
+// PDFreader contextual text box patch

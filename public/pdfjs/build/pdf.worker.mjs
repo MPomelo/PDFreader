@@ -55824,6 +55824,7 @@ class FreeTextAnnotation extends MarkupAnnotation {
     this.setDefaultAppearance(params);
     this._hasAppearance = !!this.appearance;
     this.data.pdfreaderTextBox = params.dict.get("PDFreaderTextBox") === true;
+    this.data.pdfreaderWhiteBackground = params.dict.get("PDFreaderTextBoxBackground") === true;
     if (this.data.pdfreaderTextBox) {
       const { defaultAppearanceData } = this.data;
       defaultAppearanceData.fontSize ||= 10;
@@ -55890,6 +55891,8 @@ class FreeTextAnnotation extends MarkupAnnotation {
     const da = `/Helv ${fontSize} Tf ${getPdfColor(color, true)}`;
     freetext.set("DA", da);
     if (annotation.pdfreaderBoxWidth) freetext.set("PDFreaderTextBox", true);
+    if (annotation.pdfreaderWhiteBackground) freetext.set("PDFreaderTextBoxBackground", true);
+    else freetext.delete("PDFreaderTextBoxBackground");
     freetext.setIfDefined("Contents", stringToAsciiOrUTF16BE(value));
     freetext.setIfNotExists("F", 4);
     freetext.setIfNotExists("Border", [0, 0, 0]);
@@ -55938,7 +55941,8 @@ class FreeTextAnnotation extends MarkupAnnotation {
       }[rotation];
       if (w > 0 && h > 0) {
         const mask = textBoxMask(value, fontSize, w, h);
-        const appearance = ["q", `${a} ${b} ${c} ${d} 0 0 cm`, getPdfColor(color, true),
+        const paint = annotation.pdfreaderWhiteBackground ? ["1 g", `${x} ${y} ${w} ${h} re f`] : [];
+        const appearance = ["q", `${a} ${b} ${c} ${d} 0 0 cm`, ...paint, getPdfColor(color, true),
           `${w} 0 0 ${h} ${x} ${y} cm`, mask, "Q"].join("\n");
         const dict = new Dict(xref);
         dict.set("FormType", 1);
@@ -56023,7 +56027,8 @@ class FreeTextAnnotation extends MarkupAnnotation {
         firstPoint = [-rect[3], rect[2] - lineAscent];
         break;
     }
-    const buffer = ["q", `${matrix.join(" ")} 0 0 cm`, `${clipBox.join(" ")} re W n`, `BT`, `${getPdfColor(color, true)}`, `0 Tc /Helv ${numberToString(newFontSize)} Tf`];
+    const paint = annotation.pdfreaderWhiteBackground ? ["1 g", `${clipBox.join(" ")} re f`] : [];
+    const buffer = ["q", `${matrix.join(" ")} 0 0 cm`, ...paint, `${clipBox.join(" ")} re W n`, `BT`, `${getPdfColor(color, true)}`, `0 Tc /Helv ${numberToString(newFontSize)} Tf`];
     buffer.push(`${firstPoint.join(" ")} Td (${escapeString(encodedLines[0])}) Tj`);
     const vShift = numberToString(lineHeight);
     for (let i = 1, ii = encodedLines.length; i < ii; i++) {
@@ -65520,3 +65525,5 @@ export { WorkerMessageHandler };
 // PDFreader text markup patch
 
 // PDFreader annotation workspace patch
+
+// PDFreader contextual text box patch

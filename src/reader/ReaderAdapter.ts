@@ -3,7 +3,7 @@ import type { Accent, ColorScheme } from '../ui/appearance';
 
 export type SelectionRect = { page: number; x: number; y: number; width: number; height: number };
 export type ReaderAction = 'previous' | 'next' | 'zoom-in' | 'zoom-out' | 'rotate' | 'print' | 'highlight' | 'underline' | 'strikeout' | 'text' | 'ink' | 'select' | 'thumbnails' | 'hide-navigation'
-  | 'first-page' | 'last-page' | 'rotate-left' | 'cursor-select' | 'cursor-hand' | 'scroll-page' | 'scroll-vertical' | 'scroll-horizontal' | 'scroll-wrapped' | 'spread-none' | 'spread-odd' | 'spread-even' | 'document-properties' | 'undo' | 'redo';
+  | 'first-page' | 'last-page' | 'rotate-left' | 'cursor-select' | 'cursor-hand' | 'scroll-page' | 'scroll-vertical' | 'scroll-horizontal' | 'scroll-wrapped' | 'spread-none' | 'spread-odd' | 'spread-even' | 'document-properties' | 'undo' | 'redo' | 'finish-text-box';
 export type AnnotationEntry = {
   id: string; page: number; lastPage?: number; kind: 'highlight' | 'underline' | 'strikeout' | 'comment' | 'freetext' | 'ink';
   editable: boolean; changed: boolean; quote: string; text: string; width?: number;
@@ -13,10 +13,16 @@ export type AnnotationWorkspace = {
   entries: AnnotationEntry[]; undo: boolean; redo: boolean; deleted: number; draft: AnnotationDraft | null;
 };
 export type AnnotationAction = 'locate' | 'edit' | 'delete' | 'resize';
+export type TextBoxStyle = { target: string | null; size: number; color: string; whiteBackground: boolean };
+export type TextBoxStyleChange =
+  | { property: 'size'; value: number }
+  | { property: 'color'; value: string }
+  | { property: 'background'; value: boolean };
 export type ReaderState = {
   documentId: string; page: number; pages: number; selection: string; selectionRaw: string;
   selectionRects: SelectionRect[]; pageHasText: boolean | null;
   outline: { title: string; index: number }[]; dirty: boolean; revision: number;
+  textBox?: TextBoxStyle | null;
   annotationHistory?: { undo: boolean; redo: boolean };
   zoom?: string; selectionAnchor?: string;
   find?: { requestId: string; status: 'pending' | 'found' | 'not-found' | 'wrapped'; current: number; total: number; previous: boolean } | null;
@@ -101,6 +107,9 @@ export class ReaderAdapter {
   showComments() { return this.request<boolean>('show-comments'); }
   annotationAction(action: AnnotationAction, id: string, value?: number) {
     return this.request<boolean>('annotation-action', { action, id, value });
+  }
+  updateTextBoxStyle(target: TextBoxStyle['target'], change: TextBoxStyleChange) {
+    return this.request<boolean>('text-box-style', { target, ...change });
   }
   annotationNote(id: string, value: string | null) {
     return this.request<boolean>('annotation-note', { id, value });

@@ -71,7 +71,25 @@ const controls = {
 const textSize = document.getElementById('editorFreeTextFontSize');
 function updateTextSize() { document.getElementById('pdfreader-text-size').value = textSize.value; }
 textSize.addEventListener('input', updateTextSize);
-app.eventBus.on('annotationeditorparamschanged', updateTextSize);
+const editorManager = () => app.pdfViewer._layerProperties.annotationEditorUIManager;
+function textBoxStyle() {
+  return hostToolbar && editorManager()?.getMode() === AnnotationEditorType.FREETEXT
+    ? editorManager().pdfreaderTextBoxStyle() : null;
+}
+function finishTextBox() {
+  editorManager()?.pdfreaderFinishTextBox();
+  app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: AnnotationEditorType.NONE });
+  scheduleObserve();
+}
+app.eventBus.on('annotationeditorparamschanged', () => {
+  updateTextSize();
+  if (textBoxStyle()) scheduleObserve();
+});
+app.eventBus.on('annotationeditormodechanged', ({ mode }) => {
+  if (mode !== AnnotationEditorType.FREETEXT && editorManager()) editorManager().pdfreaderTextPlacement = false;
+  publish();
+});
+app.eventBus.on('pdfreadertextdismiss', finishTextBox);
 
 function addMarkup(action, source, selected = precise.current) {
   const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
@@ -105,7 +123,7 @@ const storageHash = () => activeDocument?.annotationStorage.serializable.hash ||
 function state() {
   return { documentId, page: app.pdfViewer.currentPageNumber, pages: activeDocument.numPages,
     selection, selectionRaw, selectionRects, selectionAnchor, pageHasText, outline, zoom: String(app.pdfViewer.currentScaleValue || 'auto'),
-    find: findResult,
+    find: findResult, textBox: textBoxStyle(),
     annotationHistory: app.pdfViewer._layerProperties.annotationEditorUIManager?.pdfreaderHistory?.(),
     dirty: ledger.dirty || pendingEdit || hasCommentDraft(document), revision: ledger.revision };
 }
@@ -362,7 +380,16 @@ window.addEventListener('message', event => {
           else if (action === 'zoom-out') app.zoomOut();
           else if (action === 'rotate') app.rotatePages(90);
           else if (action === 'print') app.triggerPrinting();
-          else if (action === 'select') app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: 0 });
+          else if (action === 'select' || action === 'finish-text-box') finishTextBox();
+          else if (hostToolbar && action === 'text') {
+            const manager = editorManager();
+            if (!manager) throw Error('当前文档的文本框工具尚未准备好。');
+            manager.pdfreaderFinishTextBox();
+            manager.unselectAll();
+            manager.pdfreaderTextPlacement = true;
+            selectionMenu.close();
+            app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: AnnotationEditorType.FREETEXT });
+          }
           else if (action === 'thumbnails') app.viewsManager?.switchView(1, true);
           else if (action === 'hide-navigation') app.viewsManager?.close();
           else if (action === 'undo' || action === 'redo') {
@@ -396,6 +423,14 @@ window.addEventListener('message', event => {
           reply(true);
         } else if (message.type === 'show-comments') {
           annotations.show();
+          reply(true);
+        } else if (message.type === 'text-box-style') {
+          const { target, property, value } = message;
+          const valid = property === 'size' && Number.isInteger(value) && value >= 5 && value <= 100 ||
+            property === 'color' && typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ||
+            property === 'background' && typeof value === 'boolean';
+          if (valid && textBoxStyle()) editorManager().pdfreaderSetTextBoxStyle(target, property, value);
+          scheduleObserve();
           reply(true);
         } else if (message.type === 'annotation-action') {
           reply(await annotations.act(message.action, message.id, message.value));
@@ -432,6 +467,13 @@ window.addEventListener('message', event => {
 // Route shell shortcuts from inside the embedded Viewer, including editing focus.
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
+  if (!event.isComposing && event.keyCode !== 229 && !event.altKey && !app.overlayManager?.active &&
+      (key === 'escape' || key === 'enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)) && textBoxStyle()) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    finishTextBox();
+    return;
+  }
   if (hostToolbar && key === 'delete' && !event.isComposing &&
       !(event.target instanceof Element && event.target.closest('input, textarea, [contenteditable=true]'))) {
     const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;

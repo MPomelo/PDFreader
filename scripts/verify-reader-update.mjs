@@ -62,10 +62,13 @@ try {
 
   await hostButton('批注工具').click();
   await hostButton('添加文本框').click();
-  const size = frame.locator('#editorFreeTextFontSize');
+  const textSettings = page.getByRole('group', { name: '文本框设置' });
+  const size = textSettings.getByRole('spinbutton', { name: '字号' });
   await expect(size).toBeVisible();
+  await expect(frame.locator('#editorFreeTextParamsToolbar')).toBeHidden();
   await size.fill('23');
-  await expect(frame.locator('#pdfreader-text-size')).toHaveText('23');
+  await size.press('Enter');
+  await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.pdfreaderTextBoxStyle().size)).toBe(23);
   await hostButton('批注工具').click();
   await hostButton('选择文字').click();
   await expect.poll(() => frame.locator('body').evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode)).toBe(0);

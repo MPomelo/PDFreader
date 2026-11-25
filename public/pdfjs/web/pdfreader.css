@@ -6,7 +6,7 @@
 .pdfreader-host-toolbar .editorParamsToolbar:not(.hidden){visibility:visible;pointer-events:auto;position:fixed;top:8px;right:8px;z-index:30;max-height:calc(100vh - 20px)}
 .pdfreader-host-toolbar #viewerContainer{inset-block-start:0}
 .pdfreader-host-toolbar #mainContainer{min-width:0}
-.pdfreader-host-toolbar :is(#findbar,#secondaryToolbar){display:none!important}
+.pdfreader-host-toolbar :is(#findbar,#secondaryToolbar,#editorFreeTextParamsToolbar){display:none!important}
 /* Explicit theme follows the shell, rather than mixing a light toolbar with
    white masks selected from the OS dark preference. Keep the PDF page intact. */
 :root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
@@ -107,4 +107,58 @@
 @keyframes pdfreader-annotation-flash {
   0%, 45% { opacity: 1; }
   100% { opacity: 0; }
+}
+
+.pdfreader-host-toolbar .annotationEditorLayer .freeTextEditor:not(.pdfreaderNoteEditor) .editToolbar {
+  display: none;
+}
+.pdfreader-host-toolbar .annotationEditorLayer .pdfreader-text-box-editing,
+.pdfreader-host-toolbar .annotationEditorLayer .pdfreader-text-box-white {
+  background-color: white;
+}
+.pdfreader-host-toolbar .annotationEditorLayer .pdfreader-text-box:is(.selectedEditor, .pdfreader-text-box-editing) {
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+.pdfreader-host-toolbar .annotationEditorLayer.nonEditing .pdfreader-text-box {
+  pointer-events: auto;
+}
+.pdfreader-host-toolbar .pdfreader-saved-text-box {
+  cursor: text;
+}
+.pdfreader-text-box-handle {
+  position: absolute;
+  z-index: 3;
+  display: none;
+  touch-action: none;
+  pointer-events: auto;
+  background: var(--focus);
+}
+.pdfreader-text-box:is(.selectedEditor, .pdfreader-text-box-editing) .pdfreader-text-box-handle {
+  display: block;
+}
+.pdfreader-text-box-handle.resize-width {
+  top: 50%;
+  right: 0;
+  width: 8px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid white;
+  border-radius: 4px;
+  transform: translate(50%, -50%);
+  cursor: ew-resize;
+}
+.pdfreader-text-box-handle.move-box {
+  top: 0;
+  left: 50%;
+  width: min(40%, 32px);
+  height: 6px;
+  border-radius: 3px;
+  transform: translate(-50%, -50%);
+  cursor: move;
+}
+@media (forced-colors: active) {
+  .pdfreader-host-toolbar .annotationEditorLayer .pdfreader-text-box-editing { background-color: Canvas; }
+  .pdfreader-text-box-handle { background: Highlight; }
 }
