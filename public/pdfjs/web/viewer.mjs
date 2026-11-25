@@ -4521,6 +4521,7 @@ class Sidebar {
 
 
 class CommentManager {
+  #eventBus;
   #dialog;
   #popup;
   #sidebar;
@@ -4529,6 +4530,7 @@ class CommentManager {
     const dateFormat = new Intl.DateTimeFormat(undefined, {
       dateStyle: "long"
     });
+    this.#eventBus = eventBus;
     this.dialogElement = commentDialog.dialog;
     this.#dialog = new CommentDialog(commentDialog, overlayManager, eventBus, ltr);
     this.#popup = new CommentPopup(eventBus, dateFormat, ltr, this.dialogElement);
@@ -4540,7 +4542,7 @@ class CommentManager {
     this.#sidebar.setUIManager(uiManager);
   }
   showSidebar(annotations) {
-    this.#sidebar.show(annotations);
+    if (!document.documentElement.classList.contains("pdfreader-host-toolbar")) this.#sidebar.show(annotations);
   }
   hideSidebar() {
     this.#sidebar.hide();
@@ -4558,6 +4560,12 @@ class CommentManager {
     this.#sidebar.updateComment(annotation);
   }
   toggleCommentPopup(editor, isSelected, visibility, isEditable) {
+    if (document.documentElement.classList.contains("pdfreader-host-toolbar")) {
+      if (editor && isSelected && visibility !== false) {
+        this.#eventBus.dispatch("pdfreadercomment", { editor, edit: false });
+      }
+      return;
+    }
     if (isSelected) {
       this.selectComment(editor.uid);
     }
@@ -4570,6 +4578,10 @@ class CommentManager {
     this.#popup.updateColor(editor);
   }
   showDialog(uiManager, editor, posX, posY, options) {
+    if (document.documentElement.classList.contains("pdfreader-host-toolbar")) {
+      this.#eventBus.dispatch("pdfreadercomment", { editor, edit: true });
+      return;
+    }
     return this.#dialog.open(uiManager, editor, posX, posY, options);
   }
   makeCommentColor(color, opacity) {
@@ -21477,3 +21489,4 @@ if (document.readyState === "interactive" || document.readyState === "complete")
 export { PDFViewerApplication, AppConstants as PDFViewerApplicationConstants, AppOptions as PDFViewerApplicationOptions };
 
 //# sourceMappingURL=viewer.mjs.map
+// PDFreader annotation workspace patch

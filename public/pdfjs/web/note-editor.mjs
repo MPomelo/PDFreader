@@ -12,13 +12,16 @@ export function createNoteEditor(AnnotationEditor) {
       this.rotation = 0;
       this._isDraggable = false;
       this._anchor = params.anchor || null;
+      this._newValue = params.value;
       if (this._anchor) {
         this.x = Math.max(0, Math.min(1 - this.width, this._anchor.x + this._anchor.width));
         this.y = Math.max(0, Math.min(1 - this.height, this._anchor.y));
       }
     }
 
-    get color() { return '#e5a400'; }
+    get color() { return '#1768ad'; }
+    get pdfreaderText() { return this.comment?.text || ''; }
+    get pdfreaderQuote() { return this._anchor?.text || ''; }
     get opacity() { return 1; }
     get isResizable() { return false; }
     get commentButtonPosition() { return [0, 0]; }
@@ -42,7 +45,19 @@ export function createNoteEditor(AnnotationEditor) {
       return div;
     }
 
+    rebuild() {
+      super.rebuild();
+      if (this.parent && this.div && !this.isAttachedToDOM) {
+        this.parent.add(this);
+        this.parent.div.hidden = false;
+      }
+    }
+
     onceAdded() {
+      if (this._newValue) {
+        this.comment = this._newValue;
+        this._newValue = null;
+      }
       if (!this.annotationElementId && !this._undoRegistered) {
         this._undoRegistered = true;
         this.parent.addUndoableEditor(this);
@@ -56,7 +71,7 @@ export function createNoteEditor(AnnotationEditor) {
       if (this.deleted || !this.hasComment) return this.annotationElementId ? this.serializeDeleted() : null;
       if (this.annotationElementId && !this.hasEditedComment) return null;
       const data = { ...super.serialize(), id: this.annotationElementId,
-        color: [229, 164, 0], opacity: 1, user: 'PDFreader',
+        color: [23, 104, 173], opacity: 1, user: 'PDFreader',
         anchor: this._anchor };
       this.addComment(data);
       return data;

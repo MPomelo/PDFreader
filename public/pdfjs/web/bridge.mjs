@@ -8,6 +8,7 @@ import { copySelectionText, createSelectionMenu, hasTextSelection } from './sele
 import { createPreciseSelection } from './precise-selection.mjs';
 import { readCitationMetadata } from './citation-metadata.mjs';
 import { createLinkPreview } from './link-preview.mjs';
+import { createAnnotationWorkspace } from './annotation-workspace.mjs';
 options.set('enableScripting', false);
 await app.initializedPromise;
 let documentId = '', activeDocument = null, selection = '', selectionRaw = '', selectionRects = [], selectionAnchor = '';
@@ -20,6 +21,11 @@ let nativeLayoutRequested = false, linkPreviewActive = false;
 const snapshots = new Map();
 const post = data => parent.postMessage({ channel: 'pdfreader', documentId, ...data }, location.origin);
 const viewer = document.getElementById('viewer');
+const annotations = createAnnotationWorkspace(app, post, () => activeDocument, () => {
+  pendingEdit = false;
+  scheduleObserve();
+});
+app.eventBus.on('pdfreadercomment', ({ editor, edit }) => annotations.openComment(editor, edit));
 const selectionModes = [AnnotationEditorType.DISABLE, AnnotationEditorType.NONE,
   AnnotationEditorType.HIGHLIGHT, AnnotationEditorType.POPUP, AnnotationEditorType.COMMENT];
 const precise = createPreciseSelection(viewer, {
@@ -76,7 +82,7 @@ function addMarkup(action, source, selected = precise.current) {
   scheduleObserve();
 }
 function commentSelection(source, selected = precise.current) {
-  const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+  const manager = hostToolbar ? annotations.prepare() : app.pdfViewer._layerProperties.annotationEditorUIManager;
   if (!manager?.hasCommentManager()) throw Error('当前文档的注释工具尚未准备好');
   if (!selected && !hasTextSelection(window.getSelection(), viewer)) throw Error('请先在 PDF 中选中要注释的文字');
   const group = selected && { ...selected.groups[0], text: selected.text };
@@ -100,6 +106,7 @@ function state() {
   return { documentId, page: app.pdfViewer.currentPageNumber, pages: activeDocument.numPages,
     selection, selectionRaw, selectionRects, selectionAnchor, pageHasText, outline, zoom: String(app.pdfViewer.currentScaleValue || 'auto'),
     find: findResult,
+    annotationHistory: app.pdfViewer._layerProperties.annotationEditorUIManager?.pdfreaderHistory?.(),
     dirty: ledger.dirty || pendingEdit || hasCommentDraft(document), revision: ledger.revision };
 }
 function publish() {
@@ -124,7 +131,7 @@ let observeScheduled = false;
 function scheduleObserve() {
   if (observeScheduled) return;
   observeScheduled = true;
-  setTimeout(() => { observeScheduled = false; observe(); publish(); }, 0);
+  setTimeout(() => { observeScheduled = false; observe(); publish(); annotations.schedule(); }, 0);
 }
 async function readPageText() {
   const sequence = ++scanSequence, pdf = activeDocument, id = documentId;
@@ -158,7 +165,7 @@ document.getElementById('viewerContainer')?.addEventListener('scroll', () => {
   if (scrollPending || !selection) return;
   scrollPending = true; requestAnimationFrame(() => { scrollPending = false; publish(); });
 });
-app.eventBus.on('annotationeditorstateschanged', scheduleObserve);
+app.eventBus.on('editingstateschanged', scheduleObserve);
 // Viewer initializes its callbacks after firstPagePromise, so wrap that point
 // rather than installing callbacks too early and having them overwritten later.
 const initializeStorage = app._initializeAnnotationStorageCallbacks.bind(app);
@@ -293,7 +300,7 @@ window.addEventListener('message', event => {
     nativeLayoutRequested = message.nativeLayout === true;
     activeDocument = null; selection = ''; selectionRaw = ''; selectionRects = []; selectionAnchor = '';
     outline = []; destinations = []; pageHasText = null; findResult = null; citationMetadata = null; ++scanSequence;
-    snapshots.clear(); ledger = new ExportState(); pendingEdit = false;
+    snapshots.clear(); ledger = new ExportState(); pendingEdit = false; annotations.reset();
   } else if (message.documentId !== documentId) return;
   if (message.type === 'native-layout') { precise.setNativeLayout(message.page, message.layout); return; }
   if (message.type === 'dismiss-link-preview') { linkPreview.close(); return; }
@@ -360,7 +367,7 @@ window.addEventListener('message', event => {
           else if (action === 'hide-navigation') app.viewsManager?.close();
           else if (action === 'undo' || action === 'redo') {
             app.pdfViewer._layerProperties.annotationEditorUIManager?.[action]();
-            observe();
+            scheduleObserve();
           }
           else if (action === 'underline' || action === 'strikeout' || action === 'highlight' && (precise.current || hasTextSelection(window.getSelection(), viewer))) {
             addMarkup(action, 'pdfreader_toolbar');
@@ -388,14 +395,18 @@ window.addEventListener('message', event => {
           commentSelection('pdfreader_toolbar');
           reply(true);
         } else if (message.type === 'show-comments') {
-          app.eventBus.dispatch('switchannotationeditormode', { source: app, mode: 16 });
+          annotations.show();
           reply(true);
+        } else if (message.type === 'annotation-action') {
+          reply(await annotations.act(message.action, message.id, message.value));
+        } else if (message.type === 'annotation-note') {
+          reply(await annotations.finishNote(message.id, message.value));
         } else if (message.type === 'flush') reply(flush());
         else if (message.type === 'export') {
           exporting = true;
           try {
             flush();
-            const snapshot = ledger.snapshot(), pdf = activeDocument;
+            const snapshot = { ...ledger.snapshot(), annotations: annotations.snapshot() }, pdf = activeDocument;
             const bytes = await (pdf.annotationStorage.size ? pdf.saveDocument() : pdf.getData());
             if (message.documentId !== documentId || pdf !== activeDocument) return;
             snapshots.clear(); snapshots.set(message.requestId, snapshot);
@@ -407,7 +418,7 @@ window.addEventListener('message', event => {
         } else if (message.type === 'exported') {
           const snapshot = snapshots.get(message.token);
           if (!snapshot) throw Error('导出确认已过期');
-          flush(); ledger.acknowledge(snapshot); snapshots.delete(message.token);
+          flush(); ledger.acknowledge(snapshot); annotations.acknowledge(snapshot.annotations); snapshots.delete(message.token);
           publish(); reply(state());
         }
       }
@@ -421,6 +432,17 @@ window.addEventListener('message', event => {
 // Route shell shortcuts from inside the embedded Viewer, including editing focus.
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
+  if (hostToolbar && key === 'delete' && !event.isComposing &&
+      !(event.target instanceof Element && event.target.closest('input, textarea, [contenteditable=true]'))) {
+    const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+    if (manager?.getMode() === AnnotationEditorType.NONE && manager.hasSelection) {
+      manager.delete();
+      scheduleObserve();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+  }
   if (hostToolbar && !event.altKey && (event.ctrlKey || event.metaKey) &&
       (key === 'f' && !event.shiftKey || key === 'g')) {
     event.preventDefault(); event.stopImmediatePropagation();

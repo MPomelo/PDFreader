@@ -61,7 +61,7 @@ try {
   await page.setViewportSize({ width: 1150, height: 850 });
 
   await hostButton('批注工具').click();
-  await hostButton('添加文本').click();
+  await hostButton('添加文本框').click();
   const size = frame.locator('#editorFreeTextFontSize');
   await expect(size).toBeVisible();
   await size.fill('23');
@@ -122,6 +122,17 @@ try {
   await expect.poll(markings).toEqual([{ markup: 'underline', quads: 16, page: 0 }]);
   await viewer.press('Control+y');
   await expect.poll(markings).toHaveLength(3);
+
+  await hostButton('批注工具').click();
+  await hostButton('管理批注').click();
+  const sidebar = page.getByRole('complementary', { name: '批注管理' });
+  const deleteGroup = sidebar.getByRole('button', { name: '删除删除线', exact: true });
+  await expect(deleteGroup).toHaveCount(1);
+  await deleteGroup.click();
+  await expect.poll(markings).toEqual([{ markup: 'underline', quads: 16, page: 0 }]);
+  await sidebar.getByRole('button', { name: '撤销批注', exact: true }).click();
+  await expect.poll(markings).toHaveLength(3);
+  await sidebar.getByRole('button', { name: '关闭批注侧栏', exact: true }).click();
 
   await page.evaluate(() => {
     window.showSaveFilePicker = async () => ({ name: 'markup-update.pdf', createWritable: async () => ({

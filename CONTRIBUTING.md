@@ -62,8 +62,9 @@ use the browser layout.
 The pinned generic viewer is vendored under `public/pdfjs`. Host integration
 lives in `bridge.mjs`, viewer preferences/styles, and the annotation patches.
 For the matching upstream version, apply `scripts/patch-pdfjs-notes.mjs` followed
-by `scripts/patch-pdfjs-text-markup.mjs`. Rerun annotation and export checks after
-upgrading PDF.js.
+by `scripts/patch-pdfjs-text-markup.mjs` and
+`scripts/patch-pdfjs-annotation-workspace.mjs`. Rerun annotation and export checks
+after upgrading PDF.js.
 Keep upstream notices and regenerate both runtime license inventories before
 distributing a build. `NOTICE` lists original and third-party components.
 

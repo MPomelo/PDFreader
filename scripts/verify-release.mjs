@@ -58,7 +58,7 @@ try{
  await find.getByRole('button',{name:'关闭查找'}).click();await find.waitFor({state:'hidden'});
  // Use the actual editor, not serialized annotation injection.
  await page.getByRole('combobox',{name:'缩放',exact:true}).selectOption('page-fit');
- await page.getByRole('button',{name:'批注工具',exact:true}).click();await page.getByRole('button',{name:'添加文本',exact:true}).click();
+ await page.getByRole('button',{name:'批注工具',exact:true}).click();await page.getByRole('button',{name:'添加文本框',exact:true}).click();
  await frame().locator('.annotationEditorLayer').first().click({position:{x:110,y:430}});
  const editor=frame().locator('.freeTextEditor [contenteditable=true]').last();await editor.waitFor();await editor.fill('RELEASE_NATIVE_TEXT');await page.getByRole('button',{name:'批注工具',exact:true}).click();await page.getByRole('button',{name:'选择文字',exact:true}).click();await page.locator('.document-tab.selected .dirty-dot').waitFor();
  const exported=join(root,'安装版 批注-'+Date.now()+'.pdf');

@@ -79,3 +79,32 @@
 }
 .pdfreader-link-preview-image { overflow: hidden; border-radius: 4px; }
 .pdfreader-link-preview canvas { display: block; }
+
+.pdfreader-host-toolbar .pdfreaderNoteEditor .annotationCommentButton.hidden {
+  display: block !important;
+}
+.pdfreader-host-toolbar :is(.pdfreaderNoteEditor .annotationCommentButton, .textAnnotation.comment) {
+  background-color: var(--selected) !important;
+}
+.pdfreader-host-toolbar .annotationEditorLayer .pdfreader-text-box {
+  box-sizing: border-box;
+  border: 0;
+  padding: 0;
+}
+.annotationEditorLayer .pdfreader-text-box .internal {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pdfreader-annotation-location {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+  animation: pdfreader-annotation-flash 1.4s ease-out forwards;
+}
+@keyframes pdfreader-annotation-flash {
+  0%, 45% { opacity: 1; }
+  100% { opacity: 0; }
+}

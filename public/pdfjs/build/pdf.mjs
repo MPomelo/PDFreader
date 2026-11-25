@@ -25,6 +25,8 @@
  */
 
 import { createNoteEditor } from "../web/note-editor.mjs";
+import { lineMarkupBoxes } from "../web/markup-appearance.mjs";
+import { textBoxFont } from "../web/textbox-appearance.mjs";
 
 ;// ./src/shared/util.js
 const isNodeJS = typeof process === "object" && process + "" === "[object process]" && !process.versions.nw && !(process.versions.electron && process.type && process.type !== "browser");
@@ -3047,6 +3049,10 @@ class AnnotationEditorUIManager {
     this.#floatingToolbar?.hide();
     this.unselectAll();
     const editors = targets.map(({ layer, ...data }) => layer.addSelectionMarkup({ ...data, markup, methodOfCreation }));
+    if (editors.length > 1) {
+      const group = Symbol("markup selection");
+      for (const editor of editors) editor.pdfreaderGroup = group;
+    }
     this.addCommands({
       cmd: () => editors.forEach(editor => this.rebuild(editor)),
       undo: () => editors.forEach(editor => editor.remove()),
@@ -3118,6 +3124,11 @@ class AnnotationEditorUIManager {
     }
     if (!layer || !boxes?.length) return false;
     const anchor = { ...boxes[0], text };
+    if (this.pdfreaderOpenNote) {
+      selection?.removeAllRanges();
+      this.pdfreaderOpenNote({ pageIndex: layer.pageIndex, anchor });
+      return true;
+    }
     selection?.removeAllRanges();
     const create = () => {
       const editor = new NoteEditor({ parent: layer, id: this.getId(),
@@ -3477,7 +3488,7 @@ class AnnotationEditorUIManager {
     if (!this.isShiftKeyDown && event.key === "Shift") {
       this.isShiftKeyDown = true;
     }
-    if (this.isEditorHandlingKeyboard) return;
+    if (event.isComposing || event.keyCode === 229 || this.isEditorHandlingKeyboard) return;
     if (this.#mode !== AnnotationEditorType.NONE) {
       AnnotationEditorUIManager._keyboardManager.exec(this, event);
       return;
@@ -3846,6 +3857,31 @@ class AnnotationEditorUIManager {
       }
     }
   }
+  pdfreaderEditors() {
+    return Array.from(this.#allEditors.values()).filter(editor => !editor.deleted && !editor.isEmpty());
+  }
+  pdfreaderHistory() {
+    return { undo: this.#commandManager.hasSomethingToUndo(), redo: this.#commandManager.hasSomethingToRedo() };
+  }
+  pdfreaderCreateNote(pageIndex, anchor, value) {
+    const parent = this.getLayer(pageIndex);
+    if (!parent) return null;
+    const editor = new NoteEditor({ parent, id: this.getId(), uiManager: this, x: 0, y: 0, anchor, value });
+    parent.add(editor);
+    parent.div.hidden = false;
+    return editor;
+  }
+  async pdfreaderImportEditor(pageIndex, id) {
+    const layer = this.getLayer(pageIndex);
+    if (!layer || this.isDeletedAnnotationElement(id)) return null;
+    const existing = layer.getEditorByUID(id);
+    if (existing) return existing;
+    const editable = layer.getEditableAnnotation(id);
+    if (!editable) return null;
+    const editor = await layer.deserialize(editable);
+    if (editor) layer.addOrRebuild(editor);
+    return editor;
+  }
   *getEditors(pageIndex) {
     for (const editor of this.#allEditors.values()) {
       if (editor.pageIndex === pageIndex) {
@@ -4020,6 +4056,18 @@ class AnnotationEditorUIManager {
       return;
     }
     const editors = drawingEditor ? [drawingEditor] : [...this.#selectedEditors];
+    this.pdfreaderDeleteEditors(editors);
+  }
+  pdfreaderDeleteEditors(editors) {
+    const expanded = new Set(editors);
+    const groups = new Set(editors.map(editor => editor.pdfreaderGroup).filter(Boolean));
+    if (groups.size) {
+      for (const editor of this.#allEditors.values()) {
+        if (groups.has(editor.pdfreaderGroup)) expanded.add(editor);
+      }
+    }
+    editors = [...expanded];
+    if (!editors.length) return;
     const cmd = () => {
       this._editorUndoBar?.show(undo, editors.length === 1 ? editors[0].editorType : editors.length);
       for (const editor of editors) {
@@ -20747,6 +20795,10 @@ class PopupElement {
     }
     this.#commentButton.style.backgroundColor = this.commentButtonColor || "";
   }
+  get pdfreaderEntry() {
+    const { data, parent } = this.#firstElement;
+    return { ...data, pageIndex: parent.page.pageNumber - 1, contentsObj: { str: this.comment } };
+  }
   get commentButtonColor() {
     const {
       color,
@@ -22173,6 +22225,27 @@ class AnnotationLayer {
 const EOL_PATTERN = /\r\n?|\n/g;
 class FreeTextEditor extends AnnotationEditor {
   #content = "";
+  #boxWidth = 0;
+  get pdfreaderText() { return this.#serializeContent(); }
+  get pdfreaderBoxWidth() { return this.#boxWidth; }
+  pdfreaderResize(width) {
+    this.commit();
+    const previous = this.#boxWidth;
+    if (!previous || previous === width) return;
+    const apply = width => {
+      this.#boxWidth = width;
+      this.#applyBoxWidth();
+      this.#setEditorDimensions();
+      this.addToAnnotationStorage();
+    };
+    this.addCommands({ cmd: () => apply(width), undo: () => apply(previous), mustExec: true });
+  }
+  #applyBoxWidth() {
+    if (!this.#boxWidth) return;
+    this.div.classList.add("pdfreader-text-box");
+    this.div.style.width = `calc(${this.#boxWidth}px * var(--total-scale-factor))`;
+    this.editorDiv.style.fontFamily = textBoxFont;
+  }
   #editorDivId = `${this.id}-editor`;
   #editModeAC = null;
   #fontSize;
@@ -22223,6 +22296,7 @@ class FreeTextEditor extends AnnotationEditor {
     });
     this.color = params.color || FreeTextEditor._defaultColor || AnnotationEditor._defaultLineColor;
     this.#fontSize = params.fontSize || FreeTextEditor._defaultFontSize;
+    this.#boxWidth = params.pdfreaderBoxWidth || 0;
     if (!this.annotationElementId) {
       this._uiManager.a11yAlert(AnnotationEditor._l10nAlert.freetext);
     }
@@ -22308,8 +22382,12 @@ class FreeTextEditor extends AnnotationEditor {
   _translateEmpty(x, y) {
     this._uiManager.translateSelectedEditors(x, y, true);
   }
+  getBaseTranslation() {
+    return this.#boxWidth ? [0, 0] : super.getBaseTranslation();
+  }
   getInitialTranslation() {
     const scale = this.parentScale;
+    if (this.#boxWidth) return [0, 0];
     return [-FreeTextEditor._internalPadding * scale, -(FreeTextEditor._internalPadding + this.#fontSize) * scale];
   }
   rebuild() {
@@ -22534,12 +22612,13 @@ class FreeTextEditor extends AnnotationEditor {
     style.fontSize = `calc(${this.#fontSize}px * var(--total-scale-factor))`;
     style.color = this.color;
     this.div.append(this.editorDiv);
+    this.#applyBoxWidth();
     this.overlayDiv = document.createElement("div");
     this.overlayDiv.classList.add("overlay", "enabled");
     this.div.append(this.overlayDiv);
     if (this._isCopy || this.annotationElementId) {
       const [parentWidth, parentHeight] = this.parentDimensions;
-      if (this.annotationElementId) {
+      if (this.annotationElementId && !this.#boxWidth) {
         const {
           position
         } = this._initialData;
@@ -22570,7 +22649,7 @@ class FreeTextEditor extends AnnotationEditor {
             break;
         }
         this.setAt(posX * parentWidth, posY * parentHeight, tx, ty);
-      } else {
+      } else if (this._isCopy) {
         this._moveAfterPaste(baseX, baseY);
       }
       this.#setContent();
@@ -22682,7 +22761,7 @@ class FreeTextEditor extends AnnotationEditor {
     return this.editorDiv;
   }
   getPDFRect() {
-    const padding = FreeTextEditor._internalPadding * this.parentScale;
+    const padding = this.#boxWidth ? 0 : FreeTextEditor._internalPadding * this.parentScale;
     return this.getRect(padding, padding);
   }
   static async deserialize(data, parent, uiManager) {
@@ -22714,11 +22793,14 @@ class FreeTextEditor extends AnnotationEditor {
       if (!textContent?.length) {
         return null;
       }
+      const pdfreaderBoxWidth = data.data.pdfreaderTextBox
+        ? (rotation % 180 ? rect[3] - rect[1] : rect[2] - rect[0]) : 0;
       initialData = data = {
         annotationType: AnnotationEditorType.FREETEXT,
         color: Array.from(fontColor),
         fontSize,
         value: textContent.join("\n"),
+        pdfreaderBoxWidth,
         position: textPosition,
         pageIndex: pageNumber - 1,
         rect: rect.slice(0),
@@ -22735,6 +22817,13 @@ class FreeTextEditor extends AnnotationEditor {
     }
     const editor = await super.deserialize(data, parent, uiManager);
     editor.#fontSize = data.fontSize;
+    editor.#boxWidth = data.pdfreaderBoxWidth || 0;
+    if (editor.#boxWidth && data.annotationElementId) {
+      const [pageX, pageY] = editor.pageTranslation;
+      const [pageWidth, pageHeight] = editor.pageDimensions;
+      editor.x -= pageX / pageWidth;
+      editor.y += pageY / pageHeight;
+    }
     editor.color = Util.makeHexColor(...data.color);
     editor.#content = FreeTextEditor.#deserializeContent(data.value);
     editor._initialData = initialData;
@@ -22754,7 +22843,8 @@ class FreeTextEditor extends AnnotationEditor {
     const serialized = Object.assign(super.serialize(isForCopying), {
       color,
       fontSize: this.#fontSize,
-      value: this.#serializeContent()
+      value: this.#serializeContent(),
+      ...(this.#boxWidth ? { pdfreaderBoxWidth: this.#boxWidth } : null)
     });
     this.addComment(serialized);
     if (isForCopying) {
@@ -22774,7 +22864,7 @@ class FreeTextEditor extends AnnotationEditor {
       color,
       pageIndex
     } = this._initialData;
-    return this.hasEditedComment || this._hasBeenMoved || serialized.value !== value || serialized.fontSize !== fontSize || serialized.color.some((c, i) => c !== color[i]) || serialized.pageIndex !== pageIndex;
+    return this.hasEditedComment || this._hasBeenMoved || (serialized.pdfreaderBoxWidth || 0) !== this._initialData.pdfreaderBoxWidth || serialized.value !== value || serialized.fontSize !== fontSize || serialized.color.some((c, i) => c !== color[i]) || serialized.pageIndex !== pageIndex;
   }
   renderAnnotationElement(annotation) {
     const content = super.renderAnnotationElement(annotation);
@@ -24384,13 +24474,8 @@ class HighlightOutline extends Outline {
     this.firstPoint = firstPoint;
     this.lastPoint = lastPoint;
   }
-  static build(boxes, isLTR, markup) {
-    // Draw on the selected line while keeping the full text quads for PDF export.
-    const marks = markup ? boxes.map(({ x, y, width, height }) => {
-      const thickness = Math.min(height * 0.16, 0.002);
-      const offset = markup === "underline" ? height - thickness : (height - thickness) / 2;
-      return { x, y: y + offset, width, height: thickness };
-    }) : boxes;
+  static build(boxes, isLTR, markup, pageDimensions) {
+    const marks = markup ? lineMarkupBoxes(boxes, markup, pageDimensions) : boxes;
     const outline = new HighlightOutliner(marks, markup ? 0 : 0.001).getOutlines();
     outline.#boxes = boxes;
     outline.focusOutline = new HighlightOutliner(boxes, 0.0025, 0.001, isLTR).getOutlines();
@@ -24607,6 +24692,8 @@ class HighlightDrawingOptions extends DrawingOptions {
 }
 class HighlightEditor extends DrawingEditor {
   #markup;
+  get pdfreaderMarkup() { return this.#markup; }
+  get pdfreaderText() { return this.#text; }
   #groupedUndo;
   #anchorNode = null;
   #anchorOffset = 0;
@@ -24687,7 +24774,7 @@ class HighlightEditor extends DrawingEditor {
     if (boxes) {
       params = {
         ...params,
-        drawOutlines: HighlightOutline.build(boxes, this._uiManager.direction === "ltr", params.markup)
+        drawOutlines: HighlightOutline.build(boxes, this._uiManager.direction === "ltr", params.markup, this.pageDimensions)
       };
     }
     super._addOutlines(params);
@@ -24917,7 +25004,7 @@ class HighlightEditor extends DrawingEditor {
           height: (quadPoints[i + 1] - quadPoints[i + 5]) / pageHeight
         });
       }
-      return HighlightOutline.build(boxes, uiManager.direction === "ltr", data.markup);
+      return HighlightOutline.build(boxes, uiManager.direction === "ltr", data.markup, [pageWidth, pageHeight]);
     }
     const thickness = data.thickness || this._defaultDrawingOptions.thickness;
     const points = (data.inkLists || data.outlines.points)[0];
@@ -28421,7 +28508,19 @@ class AnnotationEditorLayer {
       this.#uiManager.unselectAll();
       return;
     }
-    this.createAndAddNewEditor(event, false);
+    const start = this.pdfreaderTextBoxStart;
+    this.pdfreaderTextBoxStart = null;
+    if (start && currentMode === AnnotationEditorType.FREETEXT) {
+      const delta = event.clientX - start.clientX;
+      const maxWidth = (start.bounds.right - Math.min(start.clientX, event.clientX)) / this.scale;
+      const width = Math.max(12, Math.min(maxWidth, Math.abs(delta) > 6 ? Math.abs(delta) / this.scale : 180));
+      this.createAndAddNewEditor({
+        offsetX: Math.min(start.offsetX, event.offsetX), offsetY: Math.min(start.offsetY, event.offsetY)
+      }, false, { pdfreaderBoxWidth: width });
+      return;
+    }
+    this.createAndAddNewEditor(event, false, currentMode === AnnotationEditorType.FREETEXT &&
+      document.documentElement.classList.contains("pdfreader-host-toolbar") ? { pdfreaderBoxWidth: 180 } : {});
   }
   pointerdown(event) {
     if (this.#uiManager.getMode() === AnnotationEditorType.HIGHLIGHT) {
@@ -28441,6 +28540,12 @@ class AnnotationEditorLayer {
       return;
     }
     this.#hadPointerDown = true;
+    this.pdfreaderTextBoxStart = null;
+    if (this.#uiManager.getMode() === AnnotationEditorType.FREETEXT &&
+        document.documentElement.classList.contains("pdfreader-host-toolbar")) {
+      const { clientX, offsetX, offsetY } = event;
+      this.pdfreaderTextBoxStart = { clientX, offsetX, offsetY, bounds: this.div.getBoundingClientRect() };
+    }
     if (this.#currentEditorType?.isDrawer) {
       this.startDrawingSession(event);
       return;
@@ -29358,3 +29463,5 @@ export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, Anno
 // PDFreader standalone notes patch
 
 // PDFreader text markup patch
+
+// PDFreader annotation workspace patch

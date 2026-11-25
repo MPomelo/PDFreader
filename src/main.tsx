@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Add20Regular, DocumentPdf20Regular, DocumentText20Regular, Dismiss20Regular, FolderOpen20Regular } from '@fluentui/react-icons';
-import { ReaderAdapter, type ReaderEvent, type ReaderState, type ReaderAction } from './reader/ReaderAdapter';
+import { ReaderAdapter, type ReaderEvent, type ReaderState, type ReaderAction, type AnnotationWorkspace, type AnnotationDraft, type AnnotationAction } from './reader/ReaderAdapter';
 import { DocumentPane, type PdfTab } from './reader/DocumentPane';
 import { adjacentTabId, shortcutTabId } from './reader/tabs';
 import { mayLeaveDocument, type LeaveChoice } from './reader/leave-document';
@@ -14,6 +14,7 @@ import { ResizeHandle } from './ui/ResizeHandle';
 import { DEFAULT_WIDTHS, WIDTHS_KEY, panelLayout, parseWidths } from './ui/panel-widths';
 import { SettingsDialog, type SettingsSection } from './ui/SettingsDialog';
 import { DocumentToolbar } from './ui/DocumentToolbar';
+import { AnnotationPanel } from './ui/AnnotationPanel';
 import { WindowControls } from './ui/WindowControls';
 import { DEFAULT_ACCENT, type Accent, type ColorScheme, type ThemeMode } from './ui/appearance';
 import { CitationDialog } from './citation/CitationDialog';
@@ -28,6 +29,7 @@ import { imageName, isImage, markdownUrl, readDroppedImage, saveNativeText, stor
 import './ui/styles.css';
 import './ui/stage05.css';
 import './ui/workspace.css';
+import './ui/annotations.css';
 
 const brandIcon = new URL('../src-tauri/icons/app-icon.svg', import.meta.url).href;
 const systemColorScheme = window.matchMedia('(prefers-color-scheme: dark)');
@@ -56,6 +58,10 @@ function App() {
   const [operation, setOperation] = useState(''), exclusive = useRef(false), openQueue = useRef(Promise.resolve());
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [left, setLeft] = useState(false), [right, setRight] = useState(false), [reading, setReading] = useState(false), [floating, setFloating] = useState(false);
+  const [annotationTab, setAnnotationTab] = useState('');
+  const [annotations, setAnnotations] = useState<Record<string, AnnotationWorkspace>>({});
+  const draftValues = useRef(new Map<string, { draft: AnnotationDraft; value: string }>());
+  const [, refreshDraft] = useState(0);
   const [theme, setTheme] = useState<ThemeMode>('system');
   const [systemTheme, setSystemTheme] = useState<ColorScheme>(() => systemColorScheme.matches ? 'dark' : 'light');
   const [accent, setAccent] = useState<Accent>(DEFAULT_ACCENT);
@@ -212,9 +218,44 @@ function App() {
     });
   }
   function answer(choice: LeaveChoice) { const resolve = leaveAnswer.current; leaveAnswer.current = null; setPrompt(null); resolve?.(choice); }
+  function pendingNote(id: string) {
+    const note = draftValues.current.get(id);
+    return note && note.value !== note.draft.value ? note : undefined;
+  }
+  async function finishNote(tabId: string, draftId: string, value: string | null) {
+    await panes.current.get(tabId)?.annotationNote(draftId, value);
+    draftValues.current.delete(tabId);
+    setAnnotations(previous => {
+      const workspace = previous[tabId];
+      return workspace?.draft?.id === draftId ? { ...previous, [tabId]: { ...workspace, draft: null } } : previous;
+    });
+  }
+  function showAnnotations(id: string) {
+    setAnnotationTab(id);
+    setReading(false);
+    setLeft(true);
+    void panes.current.get(id)?.action('hide-navigation').catch(() => {});
+  }
+  async function annotationAction(id: string, action: AnnotationAction, item: string, value?: number) {
+    try { return await panes.current.get(id)?.annotationAction(action, item, value) ?? false; }
+    catch (error) { setError(String(error)); return false; }
+  }
+  function updateDraft(id: string, value: string) {
+    const note = draftValues.current.get(id);
+    if (note) {
+      note.value = value;
+      refreshDraft(version => version + 1);
+    }
+  }
   async function exportTab(id: string): Promise<boolean> {
     const tab = tabsRef.current.find(tab => tab.id === id), pane = panes.current.get(id);
     if (tab?.kind !== 'pdf' || !tab.state || !pane) return false;
+    const note = pendingNote(id);
+    if (note) {
+      showAnnotations(id);
+      if (!note.value.trim()) throw Error('请填写、取消或删除当前注释后再导出。');
+      await finishNote(id, note.draft.id, note.value);
+    }
     setOperation('exporting');
     const { bytes, token } = await pane.export(), suggestedName = tab.name.replace(/\.pdf$/i,'') + '-批注.pdf';
     let destination: string | null;
@@ -292,7 +333,7 @@ function App() {
     const pane = panes.current.get(tab.id);
     if (tab.kind === 'pdf' && (!tab.state || !pane)) return true;
     return mayLeaveDocument(
-      () => tab.kind === 'pdf' ? pane!.flush() : Promise.resolve({ dirty: textDirty(tab) }),
+      async () => ({ dirty: tab.kind === 'pdf' ? !!pendingNote(tab.id) || (await pane!.flush()).dirty : textDirty(tab) }),
       () => {
         activate(tab.id, true);
         return new Promise<LeaveChoice>(resolve => { leaveAnswer.current = resolve; setPrompt({ id: tab.id, name: tab.name }); });
@@ -301,7 +342,11 @@ function App() {
     );
   }
   async function closeTab(id: string) {
-    await runOperation('closing', async () => { const tab=tabsRef.current.find(tab=>tab.id===id);if(!tab||!await mayClose(tab))return;await persist(tab).catch(()=>{});clearTimeout(progressTimers.current.get(id));progressTimers.current.delete(id);const next=adjacentTabId(tabsRef.current.map(tab=>tab.id),id,activeRef.current);updateTabs(items=>items.filter(item=>item.id!==id));activate(next,true);setSignals(previous=>{const next={...previous};delete next[id];return next;}); });
+    await runOperation('closing', async () => { const tab=tabsRef.current.find(tab=>tab.id===id);if(!tab||!await mayClose(tab))return;await persist(tab).catch(()=>{});clearTimeout(progressTimers.current.get(id));progressTimers.current.delete(id);
+      draftValues.current.delete(id);
+      setAnnotations(previous => { const next = { ...previous }; delete next[id]; return next; });
+      setAnnotationTab(previous => previous === id ? '' : previous);
+      const next=adjacentTabId(tabsRef.current.map(tab=>tab.id),id,activeRef.current);updateTabs(items=>items.filter(item=>item.id!==id));activate(next,true);setSignals(previous=>{const next={...previous};delete next[id];return next;}); });
   }
   async function closeWindow() {
     await runOperation('closing', async () => { for(const tab of [...tabsRef.current]) {if(!await mayClose(tab))return;await persist(tabsRef.current.find(item=>item.id===tab.id)||tab).catch(()=>{});}await repository.saveLayout(layoutRef.current).catch(()=>{});await repository.flush();await invoke('finish_close'); });
@@ -315,8 +360,16 @@ function App() {
     if(event.type==='state') { updateTabs(items=>items.map(tab=>tab.id===id&&tab.kind==='pdf'?{...tab,state:event.state}:tab));if(!previous.bytes&&(previous.state?.page!==event.state.page||previous.state?.zoom!==event.state.zoom))scheduleProgress(id); }
     else if(event.type==='error')setError(previous.name+'：'+event.message);
     else if(event.type==='export-requested')void runOperation('exporting',()=>exportTab(id));
+    else if (event.type === 'annotations') {
+      const draft = event.workspace.draft;
+      if (draft) {
+        if (draftValues.current.get(id)?.draft.id !== draft.id) draftValues.current.set(id, { draft, value: draft.value });
+      } else draftValues.current.delete(id);
+      setAnnotations(previous => ({ ...previous, [id]: event.workspace }));
+    }
     else if (event.type==='file-open-requested') void fileOpen([new File([new Uint8Array(event.bytes)],event.filename,{type:'application/pdf'})]);
     else if (id===activeRef.current) {
+      if (event.type === 'annotations-open') showAnnotations(id);
       if (event.type==='dismiss-menus') dismissToolbarMenus();
       if (event.type==='translate-selection' && !exclusive.current && !modalRef.current) translateFloating(id);
       if (event.type==='selection-copied') setNotice('已复制选区');
@@ -361,7 +414,7 @@ function App() {
         dismissToolbarMenus();
         panes.current.get(activeRef.current)?.dismissLinkPreview();
       }
-      if(!(event.ctrlKey||event.metaKey))return;
+      if(event.isComposing||event.keyCode===229||!(event.ctrlKey||event.metaKey))return;
       const value=event.key.toLowerCase();if(modalRef.current){if(value==='w'||value==='tab')event.preventDefault();return;}if(exclusive.current)return;
       if(event.shiftKey&&event.key==='Enter'&&panes.current.has(activeRef.current)){event.preventDefault();event.stopImmediatePropagation();const id=activeRef.current;if(id){setReading(false);setFloating(false);setRight(true);setSignals(previous=>({...previous,[id]:(previous[id]||0)+1}));}}
       else if(value==='o'){event.preventDefault();void handlers.current.choose();}
@@ -374,7 +427,7 @@ function App() {
         else void action(command);}
       else if(value==='tab'||/^[1-9]$/.test(value)){event.preventDefault();activate(shortcutTabId(tabsRef.current.map(tab=>tab.id),activeRef.current,value==='tab'?'Tab':value,event.shiftKey));}
     };
-    const unload=(event:BeforeUnloadEvent)=>{if(tabsRef.current.some(dirty)){event.preventDefault();event.returnValue='';}};
+    const unload=(event:BeforeUnloadEvent)=>{if(tabsRef.current.some(tab => dirty(tab) || !!pendingNote(tab.id))){event.preventDefault();event.returnValue='';}};
     const dismiss=(event:PointerEvent)=>{if(!(event.target as Element).closest('.toolbar-menu'))dismissToolbarMenus();};
     window.addEventListener('keydown',key,true);window.addEventListener('beforeunload',unload);document.addEventListener('pointerdown',dismiss);
     return()=>{disposed=true;releases.forEach(release=>release());progressTimers.current.forEach(clearTimeout);window.removeEventListener('keydown',key,true);window.removeEventListener('beforeunload',unload);document.removeEventListener('pointerdown',dismiss);};
@@ -385,7 +438,7 @@ function App() {
       const files = [...event.clipboardData.files].filter(isImage);
       if (files.length) { event.preventDefault(); void insertImages(text.id, files); }
     }}>
-    <div className="workspace-tabs"><div className="workspace-brand" data-tauri-drag-region><img src={brandIcon} width={24} height={24} alt="" /><strong>PDFreader</strong></div><div className="document-tabs" role="tablist" aria-label="文档标签">{tabs.map(tab=><div className={'document-tab'+(tab.id===activeId?' selected':'')} key={tab.id}><button id={'document-tab-'+tab.id} role="tab" aria-label={tab.name} aria-controls={'document-pane-'+tab.id} aria-selected={tab.id===activeId} tabIndex={tab.id===activeId?0:-1} title={tab.path||tab.name} onClick={()=>activate(tab.id)} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const ids=tabsRef.current.map(tab=>tab.id);const next=event.key==='Home'?ids[0]:event.key==='End'?ids[ids.length-1]:shortcutTabId(ids,tab.id,'Tab',event.key==='ArrowLeft');activate(next);document.getElementById('document-tab-'+next)?.focus();}}}>{tab.kind === 'pdf' ? <DocumentPdf20Regular /> : <DocumentText20Regular />}<span>{tab.name}</span>{dirty(tab)&&<span className="dirty-dot" aria-label={tab.kind === 'pdf' ? '有未导出修改' : '有未保存修改'} />}</button><button className="close-document" aria-label={'关闭 '+tab.name} title={'关闭 '+tab.name} disabled={!!operation} onClick={()=>{void closeTab(tab.id);}}><Dismiss20Regular /></button></div>)}</div><details className="toolbar-menu new-document">
+    <div className="workspace-tabs"><div className="workspace-brand" data-tauri-drag-region><img src={brandIcon} width={24} height={24} alt="" /><strong>PDFreader</strong></div><div className="document-tabs" role="tablist" aria-label="文档标签">{tabs.map(tab=><div className={'document-tab'+(tab.id===activeId?' selected':'')} key={tab.id}><button id={'document-tab-'+tab.id} role="tab" aria-label={tab.name} aria-controls={'document-pane-'+tab.id} aria-selected={tab.id===activeId} tabIndex={tab.id===activeId?0:-1} title={tab.path||tab.name} onClick={()=>activate(tab.id)} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const ids=tabsRef.current.map(tab=>tab.id);const next=event.key==='Home'?ids[0]:event.key==='End'?ids[ids.length-1]:shortcutTabId(ids,tab.id,'Tab',event.key==='ArrowLeft');activate(next);document.getElementById('document-tab-'+next)?.focus();}}}>{tab.kind === 'pdf' ? <DocumentPdf20Regular /> : <DocumentText20Regular />}<span>{tab.name}</span>{(dirty(tab)||pendingNote(tab.id))&&<span className="dirty-dot" aria-label={tab.kind === 'pdf' ? '有未导出修改' : '有未保存修改'} />}</button><button className="close-document" aria-label={'关闭 '+tab.name} title={'关闭 '+tab.name} disabled={!!operation} onClick={()=>{void closeTab(tab.id);}}><Dismiss20Regular /></button></div>)}</div><details className="toolbar-menu new-document">
       <summary role="button" aria-label="新建或打开文档" title="新建或打开文档"><Add20Regular /></summary>
       <div className="command-menu" onClick={event => { if ((event.target as Element).closest('button')) event.currentTarget.parentElement?.removeAttribute('open'); }}>
         <button disabled={!!operation} onClick={()=>{void choose();}}>打开文档</button>
@@ -399,7 +452,7 @@ function App() {
       onRedo={()=>editors.current.get(text.id)?.redo()} onWrap={()=>patchText(text.id,{wrap:!text.wrap})}
       onMode={mode=>patchText(text.id,{mode})} onImage={()=>imageInput.current?.click()}
       onUtf8={()=>patchText(text.id,{encoding:'UTF-8',bom:false})} onSettings={()=>openSettings()} />
-      : <DocumentToolbar reader={reader} findAdapter={panes.current.get(activeId)} findModal={settingsOpen||!!prompt||!!citationTab} busy={!!operation} left={left} right={right&&!floating&&!!active} reading={reading} onOpen={()=>{void choose();}} onExport={()=>{void runOperation('exporting',()=>exportTab(activeId));}} onLeft={()=>{void action('hide-navigation');setReading(false);setLeft(value=>!value);}} onRight={()=>{setReading(false);if(floating){setFloating(false);setRight(true);}else setRight(value=>!value);}} onReading={()=>{void action('hide-navigation');setReading(value=>!value);}} onSettings={()=>openSettings()} onCitation={()=>openCitation()} onAction={value=>{void action(value);}} onPosition={(page,zoom)=>{void position(page,zoom);}} onComment={()=>{void panes.current.get(activeId)?.commentSelection().catch(error=>setError(String(error)));}} onComments={()=>{void panes.current.get(activeId)?.showComments().catch(error=>setError(String(error)));}} />}
+      : <DocumentToolbar reader={reader} findAdapter={panes.current.get(activeId)} findModal={settingsOpen||!!prompt||!!citationTab} busy={!!operation} left={left} right={right&&!floating&&!!active} reading={reading} onOpen={()=>{void choose();}} onExport={()=>{void runOperation('exporting',()=>exportTab(activeId));}} onLeft={()=>{void action('hide-navigation');setReading(false);const showingAnnotations=annotationTab===activeId&&!!reader;setAnnotationTab('');setLeft(value=>showingAnnotations||!value);}} onRight={()=>{setReading(false);if(floating){setFloating(false);setRight(true);}else setRight(value=>!value);}} onReading={()=>{void action('hide-navigation');setReading(value=>!value);}} onSettings={()=>openSettings()} onCitation={()=>openCitation()} onAction={value=>{void action(value);}} onPosition={(page,zoom)=>{void position(page,zoom);}} onComment={()=>{void panes.current.get(activeId)?.commentSelection().catch(error=>setError(String(error)));}} onComments={()=>{void panes.current.get(activeId)?.showComments().catch(error=>setError(String(error)));}} />}
     <input ref={input} type="file" multiple accept={acceptDocuments} hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';if(files.length)void fileOpen(files);}} />
     {text?.kind === 'markdown' && isTauri() && <input ref={imageInput} type="file" multiple accept="image/*,.svg,.avif,.ico" hidden onChange={event=>{
       const files = [...(event.target.files ?? [])]; event.target.value = '';
@@ -408,7 +461,12 @@ function App() {
     {error&&<div className="error" role="alert">{error}<button aria-label="关闭错误提示" onClick={()=>setError('')}><Dismiss20Regular /></button></div>}{notice&&<div className="notice" role="status">{notice}<button aria-label="关闭通知" onClick={()=>setNotice('')}><Dismiss20Regular /></button></div>}
     {library.problems.map(problem=><div className="local-problem" role="alert" key={problem.kind+problem.document}><span>{problem.message}</span><button onClick={()=>{void repository.reload();}}>重新载入</button><button onClick={()=>{void repository.recover(problem).then(setNotice).catch(error=>setError(String(error)));}}>备份并恢复</button></div>)}
     <main>
-      {left&&!reading&&<div className="panel-shell navigation-shell" style={{width:widths.left}}><ResizeHandle side="left" width={widths.left} max={widths.leftMax} onResize={value=>resizePanel('left',value)} /><LibraryPanel snapshot={library} reader={reader} onNavigate={index=>panes.current.get(activeId)?.navigate(index)} onRecent={recent=>{void openRecent(recent);}} onRelocate={recent=>{void relocate(recent);}} onNote={note=>{void locateNote(note);}} onError={setError} /></div>}
+      {left&&!reading&&<div className="panel-shell navigation-shell" style={{width:widths.left}}><ResizeHandle side="left" width={widths.left} max={widths.leftMax} onResize={value=>resizePanel('left',value)} />
+        {reader&&annotationTab===activeId ? <AnnotationPanel key={activeId} workspace={annotations[activeId]} draftValue={draftValues.current.get(activeId)?.value || ''}
+          busy={!!operation} onClose={()=>{setAnnotationTab('');setLeft(false);}} onHistory={value=>{void action(value);}}
+          onDraftValue={value=>updateDraft(activeId,value)}
+          onNote={async (draftId,value)=>{try{await finishNote(activeId,draftId,value);}catch(error){setError(String(error));}}}
+          onAction={(value,item,width)=>annotationAction(activeId,value,item,width)} /> : <LibraryPanel snapshot={library} reader={reader} onNavigate={index=>panes.current.get(activeId)?.navigate(index)} onRecent={recent=>{void openRecent(recent);}} onRelocate={recent=>{void relocate(recent);}} onNote={note=>{void locateNote(note);}} onError={setError} />}</div>}
       <section className="reader" aria-label="文档内容">{tabs.map(tab=>tab.kind==='pdf' ? <DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} linkPreviewActive={tab.id===activeId&&!modalRef.current&&!operation} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />
         : <TextPane key={tab.id} tab={tab} active={tab.id===activeId} busy={!!operation} register={registerText} onEdit={editText}
           onMode={(id,mode)=>patchText(id,{mode})} onImages={(id,files,position)=>{void insertImages(id,files,position);}}
@@ -417,7 +475,7 @@ function App() {
       </section>
       <div id="translation-panel" className={'panel-shell translation-shell'+(floating?' floating-translation':'')} hidden={!right||reading||!reader} style={{width:floating?Math.min(480,viewport-32):widths.right}}>{!floating&&<ResizeHandle side="right" width={widths.right} max={widths.rightMax} onResize={value=>resizePanel('right',value)} />}{tabs.filter((tab): tab is PdfTab => tab.kind==='pdf').map(tab=><div className="tab-translation" key={tab.id} hidden={tab.id!==activeId} style={{'--translation-font-size': preferences.translationFontSize+'px'} as CSSProperties}><TranslationPanel reader={tab.state} documentKey={tab.fingerprint} documentName={tab.name} active={tab.id===activeId&&!settingsOpen} automatic={automatic} showMetadata={preferences.showMetadata} showOriginal={preferences.showOriginal} translateSignal={signals[tab.id]||0} floating={floating} onPin={()=>{setFloating(false);setRight(true);}} onClose={()=>setRight(false)} visible={tab.id===activeId&&right&&!reading} settingsOpen={false} onSettings={()=>openSettings('translation')} disabled={!!operation||!localReady||settingsOpen} onComment={()=>{}} /></div>)}{!tabs.length&&right&&!reading&&<aside className="translation"><div className="panel-heading"><h2>译文</h2><button aria-label="关闭翻译" onClick={()=>setRight(false)}><Dismiss20Regular /></button></div><p className="hint">打开 PDF 后选择文字翻译。</p></aside>}</div>
     </main>
-    <footer><span>{tabs.length?`${tabs.length} 个文档`:'就绪'}{reader?.dirty?' · 有未导出批注':text&&textDirty(text)?' · 有未保存修改':''}</span><span>{reader?`第 ${reader.page} / ${reader.pages} 页`:text?`第 ${text.position.line} 行，第 ${text.position.column} 列 · ${text.encoding}${text.bom?' BOM':''} · ${text.eol==='\r\n'?'CRLF':text.eol==='\r'?'CR':'LF'}`:active?.name||'PDFreader'}</span></footer>
+    <footer><span>{tabs.length?`${tabs.length} 个文档`:'就绪'}{reader&&(reader.dirty||pendingNote(activeId))?' · 有未导出批注':text&&textDirty(text)?' · 有未保存修改':''}</span><span>{reader?`第 ${reader.page} / ${reader.pages} 页`:text?`第 ${text.position.line} 行，第 ${text.position.column} 列 · ${text.encoding}${text.bom?' BOM':''} · ${text.eol==='\r\n'?'CRLF':text.eol==='\r'?'CR':'LF'}`:active?.name||'PDFreader'}</span></footer>
     <SettingsDialog open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.kind==='pdf'?active.fingerprint:''} />
     {citationTab && citationAdapter && <CitationDialog key={citationTab.id} documentName={citationTab.name} adapter={citationAdapter} onClose={() => setCitationId('')} />}
     {encodingFile && <EncodingDialog name={encodingFile} error={encodingError} onAnswer={answerEncoding} />}

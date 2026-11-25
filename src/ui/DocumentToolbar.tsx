@@ -28,10 +28,12 @@ export function DocumentToolbar({ reader, findAdapter, findModal, busy, left, ri
         <button disabled={disabled} onClick={() => onAction('highlight')}><Highlight20Regular />高亮</button>
         <button disabled={disabled || !reader?.selection} onClick={() => onAction('underline')}><TextUnderline20Regular />下划线</button>
         <button disabled={disabled || !reader?.selection} onClick={() => onAction('strikeout')}><TextStrikethrough20Regular />删除线</button>
-        <button disabled={disabled} onClick={() => onAction('text')}><Text20Regular />添加文本</button>
+        <button disabled={disabled} onClick={() => onAction('text')}><Text20Regular />添加文本框</button>
         <button disabled={disabled} onClick={() => onAction('ink')}><DrawShape20Regular />画笔</button>
         <button disabled={disabled || !reader?.selection} onClick={onComment}><Comment20Regular />为选区写注释</button>
-        <button disabled={disabled} onClick={onComments}><Comment20Regular />注释列表</button>
+        <button disabled={disabled} onClick={onComments}><Comment20Regular />管理批注</button>
+        <button disabled={disabled || !reader?.annotationHistory?.undo} onClick={() => onAction('undo')}>撤销</button>
+        <button disabled={disabled || !reader?.annotationHistory?.redo} onClick={() => onAction('redo')}>重做</button>
       </div></details><button disabled={disabled} aria-label="翻译侧栏" title="打开或关闭译文" aria-pressed={right && !reading} onClick={onRight}><Translate20Regular /><span>翻译</span></button><button disabled={disabled} aria-label="生成引文" title="生成文档引文" onClick={onCitation}><BookOpen20Regular /><span>引文</span></button></div>
     <div className="toolbar-group utilities-group">
       <details className="toolbar-menu" onToggle={event => {

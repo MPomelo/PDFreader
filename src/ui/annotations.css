@@ -1,0 +1,80 @@
+.annotation-panel {
+  border-inline-end: 1px solid var(--border);
+  padding: 14px 12px;
+}
+.annotation-controls, .annotation-item-row, .annotation-width {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.annotation-controls button, .annotation-width, .annotation-width-button {
+  font-size: 12px;
+}
+.annotation-controls button:nth-child(3) {
+  margin-inline-start: auto;
+}
+.annotation-controls button {
+  padding-inline: 5px;
+}
+.annotation-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.annotation-panel blockquote {
+  margin: 8px 0 14px;
+  padding: 7px 10px;
+  border-inline-start: 2px solid var(--accent);
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.annotation-page h3 {
+  margin: 15px 4px 4px;
+}
+.annotation-item {
+  padding: 3px 0;
+  border-block-end: 1px solid var(--border);
+}
+.annotation-item-row {
+  align-items: start;
+}
+.annotation-entry {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  justify-content: stretch;
+  gap: 3px;
+  text-align: start;
+  font-size: 12px;
+}
+.annotation-entry span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.annotation-width-button {
+  color: var(--accent);
+  padding: 3px 7px;
+  min-height: 24px;
+}
+.annotation-width {
+  justify-content: space-between;
+  padding: 3px 7px;
+}
+.annotation-width input {
+  width: 6ch;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.annotation-note {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -35,6 +35,7 @@ jobs:
       - run: npm run test:stage04
       - run: npm run test:stage05
       - run: npm run test:workspace
+      - run: npm run test:annotation-workspace
       - run: npm run test:native
       - run: node scripts/collect-runtime-licenses.mjs
       - run: node scripts/collect-rust-licenses.mjs

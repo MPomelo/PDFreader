@@ -68,9 +68,8 @@ test('standalone note lifecycle and real PDF save/reopen stay independent of hig
   // Expose the real pinned base class in a transient test module, without
   // changing the product's exports. Only DOM/storage endpoints are substituted.
   const path = resolve('.local/note-test-internals.mjs');
-  const noteUrl = pathToFileURL(resolve('public/pdfjs/web/note-editor.mjs')).href;
   const source = readFileSync('public/pdfjs/build/pdf.mjs', 'utf8')
-    .replace('"../web/note-editor.mjs"', JSON.stringify(noteUrl));
+    .replace(/"\.\.\/web\/([^"]+\.mjs)"/g, (_, name) => JSON.stringify(pathToFileURL(resolve('public/pdfjs/web', name)).href));
   writeFileSync(path, source + '\nexport { NoteEditor };\n');
   let NoteEditor, noteGetDocument;
   try {
@@ -322,8 +321,9 @@ test('actual bridge requires durable export acknowledgement and retains edits af
   const createSelectionMenu = () => ({ isOpen: false, close() {} });
   const createPreciseSelection = () => ({ current: null, setDocument() {} });
   const createLinkPreview = () => ({ reset() {}, close() {} });
+  const createAnnotationWorkspace = () => ({ reset() {}, snapshot() {}, acknowledge() {}, schedule() {} });
   const { AnnotationEditorType } = await import('../public/pdfjs/build/pdf.mjs');
-  await new AsyncFunction('app', 'options', 'AnnotationEditorType', 'expandLigatures', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'createPreciseSelection', 'createLinkPreview', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, AnnotationEditorType, expandLigatures, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, createPreciseSelection, createLinkPreview, window, document, parent, location, class {});
+  await new AsyncFunction('app', 'options', 'AnnotationEditorType', 'expandLigatures', 'normalizeSelectionText', 'ExportState', 'hasCommentDraft', 'commitCommentDraft', 'createSelectionMenu', 'createPreciseSelection', 'createLinkPreview', 'createAnnotationWorkspace', 'window', 'document', 'parent', 'location', 'Element', source)(app, { set() {} }, AnnotationEditorType, expandLigatures, normalizeSelectionText, ExportState, hasCommentDraft, commitCommentDraft, createSelectionMenu, createPreciseSelection, createLinkPreview, createAnnotationWorkspace, window, document, parent, location, class {});
   const send = async (type, extra = {}) => {
     const requestId = crypto.randomUUID();
     handlers.get('message')({ source: parent, origin: location.origin, data: { channel: 'pdfreader', documentId: 'document-one', requestId, type, ...extra } });

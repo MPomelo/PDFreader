@@ -24,6 +24,8 @@
  * pdfjsBuild = 0a4153349
  */
 
+import { textBoxMask } from "../web/textbox-appearance.mjs";
+
 ;// ./src/shared/util.js
 const isNodeJS = typeof process === "object" && process + "" === "[object process]" && !process.versions.nw && !(process.versions.electron && process.type && process.type !== "browser");
 const BBOX_INIT = [Infinity, Infinity, -Infinity, -Infinity];
@@ -55821,7 +55823,14 @@ class FreeTextAnnotation extends MarkupAnnotation {
     } = params;
     this.setDefaultAppearance(params);
     this._hasAppearance = !!this.appearance;
-    if (this._hasAppearance) {
+    this.data.pdfreaderTextBox = params.dict.get("PDFreaderTextBox") === true;
+    if (this.data.pdfreaderTextBox) {
+      const { defaultAppearanceData } = this.data;
+      defaultAppearanceData.fontSize ||= 10;
+      this.data.textContent = this._contents.str.split(/\r\n?|\n/);
+      const [x0, y0, x1, y1] = this.rectangle;
+      this.data.textPosition = { 0: [x0, y1], 90: [x0, y0], 180: [x1, y0], 270: [x1, y1] }[this.rotation];
+    } else if (this._hasAppearance) {
       const {
         fontColor,
         fontSize
@@ -55854,7 +55863,7 @@ class FreeTextAnnotation extends MarkupAnnotation {
     }
   }
   get hasTextContent() {
-    return this._hasAppearance;
+    return this._hasAppearance && !this.data.pdfreaderTextBox;
   }
   static createNewDict(annotation, xref, {
     apRef,
@@ -55880,6 +55889,7 @@ class FreeTextAnnotation extends MarkupAnnotation {
     freetext.setIfArray("Rect", rect);
     const da = `/Helv ${fontSize} Tf ${getPdfColor(color, true)}`;
     freetext.set("DA", da);
+    if (annotation.pdfreaderBoxWidth) freetext.set("PDFreaderTextBox", true);
     freetext.setIfDefined("Contents", stringToAsciiOrUTF16BE(value));
     freetext.setIfNotExists("F", 4);
     freetext.setIfNotExists("Border", [0, 0, 0]);
@@ -55918,6 +55928,28 @@ class FreeTextAnnotation extends MarkupAnnotation {
       return null;
     }
     const resources = new Dict(xref);
+    if (annotation.pdfreaderBoxWidth && typeof OffscreenCanvas !== "undefined") {
+      const [x0, y0, x1, y1] = rect;
+      const [a, b, c, d, x, y, w, h] = {
+        0: [1, 0, 0, 1, x0, y0, x1 - x0, y1 - y0],
+        90: [0, 1, -1, 0, y0, -x1, y1 - y0, x1 - x0],
+        180: [-1, 0, 0, -1, -x1, -y1, x1 - x0, y1 - y0],
+        270: [0, -1, 1, 0, -y1, x0, y1 - y0, x1 - x0]
+      }[rotation];
+      if (w > 0 && h > 0) {
+        const mask = textBoxMask(value, fontSize, w, h);
+        const appearance = ["q", `${a} ${b} ${c} ${d} 0 0 cm`, getPdfColor(color, true),
+          `${w} 0 0 ${h} ${x} ${y} cm`, mask, "Q"].join("\n");
+        const dict = new Dict(xref);
+        dict.set("FormType", 1);
+        dict.setIfName("Subtype", "Form");
+        dict.setIfName("Type", "XObject");
+        dict.set("BBox", rect);
+        dict.set("Resources", resources);
+        dict.set("Matrix", [1, 0, 0, 1, -x0, -y0]);
+        return new StringStream(appearance, dict);
+      }
+    }
     const font = new Dict(xref);
     if (baseFontRef) {
       font.set("Helv", baseFontRef);
@@ -65486,3 +65518,5 @@ export { WorkerMessageHandler };
 // PDFreader standalone notes patch
 
 // PDFreader text markup patch
+
+// PDFreader annotation workspace patch
