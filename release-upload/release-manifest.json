@@ -1,0 +1,34 @@
+{
+  "version": "2.2.1",
+  "tag": "v2.2.1",
+  "date": "2026-11-26",
+  "platform": "windows-x64",
+  "status": "prerelease",
+  "repository": "https://github.com/MPomelo/PDFreader",
+  "artifacts": [
+    {
+      "file": "PDFreader_2.2.1_x64-setup.exe",
+      "bytes": 9961865,
+      "sha256": "60ec041cab0d847b458de1b273ad48541b5f566bb497a98dae41ba8bd3b92497",
+      "codeSignature": "unsigned"
+    }
+  ],
+  "sourceCommit": "c23701ddb3812c16b664b9a9548237f34d4dbdc7",
+  "releaseTagCommit": "c23701ddb3812c16b664b9a9548237f34d4dbdc7",
+  "continuousIntegration": {
+    "status": "success",
+    "url": "https://github.com/MPomelo/PDFreader/actions/runs/45845764242",
+    "commit": "c23701ddb3812c16b664b9a9548237f34d4dbdc7",
+    "artifactArchiveDigest": "sha256:71cc4cefe52138805393ebeee9596152a123b941637c6d36ff760034a903f069"
+  },
+  "checks": {
+    "windowsCiRegressionsAndBuild": "passed",
+    "windowsSilentInstallAndUninstall": "passed",
+    "installedExecutableX64AndVersion": "passed",
+    "pdfAnnotationsAndExportWithPoppler": "passed",
+    "pdfLinkPreviewBrowser": "passed",
+    "textWorkspaceBrowserWithMockedNativeIpc": "passed",
+    "threeColumnWorkspaceAndAiBrowserWithMockedNativeIpc": "passed",
+    "chatGptSignInAndSubscriptionRequests": "mocked"
+  }
+}
