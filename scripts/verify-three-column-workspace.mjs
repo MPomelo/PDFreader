@@ -24,7 +24,7 @@ try {
       [markdownPath]: { name: 'notes.md', path: markdownPath, revision: '1', encoding: 'UTF-8', bom: false, content: '# Notes', assetsDir: 'notes.assets' },
       [textPath]: { name: 'notes.txt', path: textPath, revision: '1', encoding: 'UTF-8', bom: true, content: 'original\r\nsecond', assetsDir: 'notes.assets' },
     };
-    window.qa = { open: [pdfPath], requests: [], cancels: [], writes: [] };
+    window.qa = { open: [pdfPath], requests: [], cancels: [], writes: [], translations: [] };
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' } },
@@ -53,6 +53,16 @@ try {
           }
           case 'api_load': return { activeId: 'demo', profiles: [{ id: 'demo', model: 'mock', name: 'Mock', auth: 'none', baseUrl: 'http://127.0.0.1' }], streaming: true, targetLanguage: '中文', prompt: 'test' };
           case 'api_secret_status': return { mode: 'missing', available: false };
+          case 'api_stream_request': return new Promise(resolve => {
+            const { request, onChunk } = args;
+            const send = callbacks.get(onChunk.id);
+            const identity = { requestId: request.requestId, documentId: request.documentId };
+            window.qa.translations.push({ ...request, finish: () => {
+              send({ index: 1, end: true });
+              resolve({ ...identity, text: 'Translated source', reasoning: '', model: 'mock', usage: null, elapsedMs: 30, models: [] });
+            } });
+            send({ index: 0, message: { ...identity, seq: 1, content: 'Translating source', reasoning: '' } });
+          });
           case 'api_cancel': window.qa.cancels.push(args.requestId); return;
           case 'chat_request': return new Promise(resolve => {
             const { request, onChunk } = args;
@@ -111,6 +121,31 @@ try {
   await expect(page.getByRole('combobox', { name: '缩放', exact: true })).toBeVisible();
   await page.keyboard.press('Shift+F6');
   await expect(page.locator('footer')).toContainText('UTF-8');
+
+  await button('新建或打开文档').click();
+  await button('新建译文').click();
+  const source = page.getByRole('combobox', { name: '译文来源' });
+  await source.selectOption({ label: '固定 · paper.pdf' });
+  const selection = async index => {
+    return frame.locator('.textLayer span[dir]').nth(index).evaluate(element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      return selection.toString();
+    });
+  };
+  const selectedText = await selection(0);
+  await button('翻译选区').click();
+  await expect(page.getByRole('complementary', { name: '翻译面板' })).toContainText('Translating source');
+  await selection(1);
+  await tab('notes.txt').click();
+  await page.evaluate(() => window.qa.translations[0].finish());
+  await expect(page.getByRole('complementary', { name: '翻译面板' })).toContainText('Translated source');
+  assert.equal((await page.evaluate(() => window.qa.translations[0].text)).trim(), selectedText.trim());
+  await button('关闭 译文').click();
 
   await button('新建或打开文档').click();
   await button('新建 AI 对话').click();

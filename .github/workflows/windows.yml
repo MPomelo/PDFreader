@@ -41,6 +41,8 @@ jobs:
       - run: node scripts/collect-runtime-licenses.mjs
       - run: node scripts/collect-rust-licenses.mjs
       - run: npm run desktop:bundle
+      - run: npm run test:link-preview
+      - run: npm run test:text-browser
       - name: Smoke-test Windows installer
         timeout-minutes: 4
         shell: pwsh
@@ -54,6 +56,21 @@ jobs:
           $uninstaller = Join-Path $target 'uninstall.exe'
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or -not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
             throw 'Installed executable or uninstaller is missing'
+          }
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $installedVersion = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+          if ($installedVersion -notmatch ('^' + [regex]::Escape($version) + '(\.0)?$')) {
+            throw "Installed version $installedVersion differs from $version"
+          }
+          $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($exe))
+          try {
+            $reader.BaseStream.Position = 0x3c
+            $reader.BaseStream.Position = $reader.ReadInt32()
+            if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
+              throw 'Installed executable is not Windows x64'
+            }
+          } finally {
+            $reader.Dispose()
           }
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $exe)) { throw 'Silent uninstall failed' }

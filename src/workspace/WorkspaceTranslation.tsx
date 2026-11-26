@@ -32,7 +32,7 @@ export function WorkspaceTranslation({ source = 'upper', onSource, selected, pdf
       <TranslationPanel reader={pdf.state} documentKey={pdf.fingerprint} documentName={pdf.name}
         keepSnapshot active={visible && current?.id === pdf.id && focusedPdf === pdf.id} automatic={automatic}
         showMetadata={showMetadata} showOriginal={showOriginal} translateSignal={signal?.pdf === pdf.id ? signal.count : 0}
-        visible={visible && display === pdf.id} settingsOpen={false} onSettings={onSettings} disabled={disabled || current?.id !== pdf.id && signal?.pdf !== pdf.id} onComment={() => {}} />
+        visible={visible && display === pdf.id} settingsOpen={false} onSettings={onSettings} disabled={disabled || current?.id !== pdf.id} onComment={() => {}} />
     </div>)}
   </>;
 }

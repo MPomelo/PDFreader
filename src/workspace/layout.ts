@@ -10,7 +10,7 @@ export type Workspace = {
   lowerShare: number;
   rightShare: number;
 };
-export type Resource = { id: string; kind: 'pdf' | 'markdown' | 'txt' | 'chat' | 'translation'; name: string; path?: string; source?: string };
+export type Resource = { id: string; kind: 'pdf' | 'markdown' | 'txt' | 'chat' | 'translation'; name: string; path?: string; source?: string; fingerprint?: string };
 export type SavedWorkspace = Workspace & { version: 1; resources: Resource[] };
 
 export function defaultWorkspace(): Workspace {
@@ -61,6 +61,8 @@ export function readWorkspace(value: unknown): SavedWorkspace | null {
     ![data.lowerShare, data.rightShare].every(share => Number.isFinite(share) && share >= 0.15 && share <= 0.85)) return null;
   if (!data.resources.every(resource => resource && typeof resource.id === 'string' && /^[a-f0-9-]{36}$/.test(resource.id) &&
     ['pdf', 'markdown', 'txt', 'chat', 'translation'].includes(resource.kind) && typeof resource.name === 'string' &&
+    (resource.source === undefined || typeof resource.source === 'string') &&
+    (resource.fingerprint === undefined || typeof resource.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(resource.fingerprint)) &&
     (['chat', 'translation'].includes(resource.kind) || typeof resource.path === 'string' && !!resource.path))) return null;
   const ids = new Set(data.resources.map(resource => resource.id));
   for (const column of columns) {
@@ -69,7 +71,7 @@ export function readWorkspace(value: unknown): SavedWorkspace | null {
       data.selected?.[column] !== '' && !order.includes(data.selected?.[column])) return null;
     for (const id of order) if (!ids.delete(id)) return null;
   }
-  return ids.size || new Set(data.resources.map(resource => resource.id)).size !== data.resources.length ? null : data;
+  return data.collapsed[data.focus] || ids.size || new Set(data.resources.map(resource => resource.id)).size !== data.resources.length ? null : data;
 }
 
 export function saveWorkspace(workspace: Workspace, resources: Resource[]): SavedWorkspace {

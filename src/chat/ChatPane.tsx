@@ -46,6 +46,11 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
   const [clearing, setClearing] = useState(false);
   const requestedSource = documents.find(tab => tab.id === source) ?? documents[0];
   const busy = turns.at(-1)?.state === 'streaming';
+  const references = new Map(turns.flatMap(turn => turn.materials).map(material => [materialMarker(material), material]));
+  function citedMaterials(text: string) {
+    const markers = new Set([...text.matchAll(/\[\[(M[a-f0-9]{32})\]\]/g)].map(match => match[1]));
+    return [...markers].flatMap(marker => references.get(marker) ?? []);
+  }
 
   function update(next: Turn[]) { turnsRef.current = next; if (alive.current) setTurns(next); }
   async function persist(next = turnsRef.current) {
@@ -199,9 +204,7 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
         {turn.materials.map(item => <details key={item.id}><summary>{item.name}</summary><p className="selection">{item.text}</p></details>)}
         <div className="chat-model">{providerName[turn.provider]} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
         {turn.text && <MarkdownRenderer source={turn.text} />}
-        {turns.slice(0, index + 1).flatMap(item => item.materials).filter((item, itemIndex, values) =>
-          values.findIndex(value => value.id === item.id) === itemIndex && turn.text.includes('[[' + materialMarker(item) + ']]')
-        ).map(item => <button key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
+        {citedMaterials(turn.text).map(item => <button key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
         {turn.usage && <p className="chat-model">输入 {turn.usage.input_tokens ?? '—'} · 输出 {turn.usage.output_tokens ?? '—'} tokens</p>}
         {turn.error && <p role="alert">{turn.error}</p>}
         {turn.text && <button onClick={() => { void navigator.clipboard.writeText(turn.text).catch(error => setMessage(String(error))); }}>复制回复</button>}

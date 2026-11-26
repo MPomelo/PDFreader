@@ -153,6 +153,7 @@ function App() {
   function workspaceSnapshot(workspace = workspaceRef.current) {
     const documents: Resource[] = tabsRef.current.filter(tab => tab.path).map(tab => ({
       id: tab.id, kind: tab.kind, name: tab.name, path: tab.path,
+      fingerprint: tab.kind === 'pdf' ? tab.fingerprint : undefined,
     }));
     return saveWorkspace(workspace, [...documents, ...extrasRef.current.filter(tab => tab.kind !== 'chat' || !temporaryChats.current.has(tab.id))]);
   }
@@ -600,8 +601,18 @@ function App() {
   async function relocateWorkspace(resource: Resource) {
     const column = columnOf(workspaceRef.current, resource.id);
     if (!column) return;
-    await choose(column);
-    if (tabsRef.current.some(tab => tab.path && resource.path && tab.path.toLowerCase() === resource.path.toLowerCase())) await closeTab(resource.id);
+    await runOperation('choosing', async () => {
+      const paths = resource.kind === 'pdf'
+        ? [await invoke<string | null>('choose_pdf')]
+        : await invoke<string[]>('choose_documents');
+      const path = paths.find(value => value && documentKind(value) === resource.kind);
+      if (!path) return;
+      const id = await openPath(path, resource.fingerprint ?? '', undefined, column, resource.id);
+      if (!id) return;
+      updateExtras(extrasRef.current.filter(tab => tab.id !== resource.id));
+      setMissing(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== resource.id)));
+      if (id !== resource.id) updateWorkspace(remove(workspaceRef.current, resource.id));
+    });
   }
   function openConversation(conversation: Conversation) {
     if (extrasRef.current.some(tab => tab.id === conversation.id)) { activate(conversation.id); return; }

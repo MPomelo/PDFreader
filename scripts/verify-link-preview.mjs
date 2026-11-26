@@ -24,7 +24,8 @@ try {
   await page.getByRole('button', { name: '新建或打开文档' }).click();
   await expect(menu).toBeVisible();
   const box = await menu.boundingBox();
-  assert.ok(box.x >= 0 && box.width < 145 && box.height < 96, JSON.stringify(box));
+  const itemCount = await menu.getByRole('button').count();
+  assert.ok(box.x >= 0 && box.width < 145 && box.height < 32 * itemCount + 12, JSON.stringify(box));
   await expect(menu.getByRole('button', { name: '新建 Markdown' })).toHaveCSS('font-size', '12px');
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
