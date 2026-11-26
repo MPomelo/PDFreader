@@ -1,6 +1,6 @@
 {
   "name": "pdfreader",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "private": true,
   "overrides": {
     "katex": "0.19.1"
@@ -23,6 +23,7 @@
     "test:workspace": "node --test scripts/test-workspace.mjs",
     "desktop:bundle": "node scripts/desktop.mjs bundle",
     "audit:public": "node scripts/audit-public.mjs",
+    "test:workspace-browser": "node scripts/verify-three-column-workspace.mjs",
     "test:text-browser": "node scripts/verify-text-workspace.mjs",
     "test:link-preview": "node scripts/verify-link-preview.mjs",
     "test:annotation-workspace": "node scripts/verify-annotation-workspace.mjs"

@@ -80,7 +80,11 @@ fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Optio
         let mut headers = format!("Content-Type: application/json\r\nAccept: {}\r\n", if chunk_handler.is_some() { "text/event-stream" } else { "application/json" });
         if auth != "none" {
             let key = std::str::from_utf8(&secret.ok_or("未配置密钥")?.0).map_err(|_| "密钥编码无效")?;
-            headers.push_str(if auth == "api-key" { "api-key: " } else { "Authorization: Bearer " });
+            headers.push_str(match auth {
+                "api-key" => "api-key: ",
+                "anthropic" => "anthropic-version: 2023-06-01\r\nx-api-key: ",
+                _ => "Authorization: Bearer ",
+            });
             headers.push_str(key); headers.push_str("\r\n");
         }
         if cancel.load(Ordering::SeqCst) { return Err("已取消请求。".into()); }

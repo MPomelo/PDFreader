@@ -9,7 +9,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 pub struct Record { version: u32, revision: u64, data: Value }
 fn filename(kind: &str, document: &str) -> Result<String, String> {
     match kind {
-        "state" | "notes" if document.is_empty() => Ok(format!("{kind}.json")),
+        "state" | "notes" | "chat" if document.is_empty() => Ok(format!("{kind}.json")),
         "cache" if document.len() == 64 && document.bytes().all(|b| b.is_ascii_hexdigit()) => Ok(format!("cache-{}.json", document.to_ascii_lowercase())),
         _ => Err("本地数据类型或文档标识无效".into()),
     }
@@ -100,6 +100,19 @@ pub fn reopen_pdf(app: tauri::AppHandle, local: tauri::State<LocalState>, files:
     crate::allow(PathBuf::from(path), &files).map_err(|_| "文件已移动或不存在，请在最近文件中重新定位或移除记录".into())
 }
 #[tauri::command]
+pub fn reopen_workspace_document(app: tauri::AppHandle, local: tauri::State<LocalState>, files: tauri::State<crate::AllowedFiles>, path: String) -> Result<String, String> {
+    let _guard = local.0.lock().map_err(|e| e.to_string())?;
+    let state_path = directory(&app)?.join("state.json");
+    let _lock = lock(&state_path)?;
+    let record = read(&state_path)?;
+    let workspace = &record.data["workspace"];
+    let allowed = workspace["version"].as_u64() == Some(1) && workspace["resources"].as_array().is_some_and(|items| {
+        items.iter().any(|item| matches!(item["kind"].as_str(), Some("pdf" | "markdown" | "txt")) && item["path"].as_str() == Some(path.as_str()))
+    });
+    if !allowed { return Err("请使用打开文档重新选择该文件。".into()); }
+    crate::allow(PathBuf::from(path), &files).map_err(|_| "无法读取文件，可能已移动或权限已变化。".into())
+}
+#[tauri::command]
 pub async fn export_notes(markdown: String) -> Result<Option<String>, String> {
     if markdown.len() > 2 * 1024 * 1024 { return Err("导出内容过大".into()); }
     tauri::async_runtime::spawn_blocking(move || {
@@ -107,6 +120,20 @@ pub async fn export_notes(markdown: String) -> Result<Option<String>, String> {
         if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md")) { return Err("笔记导出必须使用 .md 扩展名".into()); }
         atomic_write(&path, markdown.as_bytes())?; Ok(Some(path.to_string_lossy().into_owned()))
     }).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn export_chat(markdown: String, files: tauri::State<'_, crate::AllowedFiles>) -> Result<Option<String>, String> {
+    if markdown.len() > 2 * 1024 * 1024 { return Err("对话导出内容过大".into()); }
+    let originals = files.0.lock().map_err(|_| "文件列表暂不可用")?.iter().cloned().collect::<Vec<_>>();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = rfd::FileDialog::new().add_filter("Markdown", &["md"]).set_file_name("PDFreader-对话.md").save_file() else { return Ok(None); };
+        if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md")) { return Err("对话导出必须使用 .md 扩展名".into()); }
+        if path.canonicalize().ok().is_some_and(|target| originals.contains(&target)) {
+            return Err("请另选导出路径，避免覆盖已打开的文档。".into());
+        }
+        atomic_write(&path, markdown.as_bytes())?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    }).await.map_err(|_| "无法启动对话导出")?
 }
 #[cfg(test)] mod tests {
     use super::*;

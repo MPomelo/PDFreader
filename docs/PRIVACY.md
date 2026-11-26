@@ -13,13 +13,26 @@ launch; enabling it can cause paid API requests. The provider's privacy policy
 and billing apply. Optional model listing and fixed test buttons also contact
 that provider when explicitly clicked.
 
+An AI conversation sends the question, reviewed excerpts and earlier completed
+turns in the same conversation to the selected OpenAI or Anthropic API after
+you submit a message. It also sends your configured chat instructions. The
+application keeps source paths and file names outside the request payload,
+unless you include them in the text. OpenAI requests disable response storage
+where supported by the Responses API. Provider privacy and billing terms apply.
+
+By default, chat history is saved locally in `local-v1/chat.json` and includes
+submitted excerpts, responses and source references. Use a temporary session
+for in-memory conversation history, or delete history from the conversation list
+and AI settings. Markdown export writes a copy to a path you choose. OpenCode is
+disabled while its Windows process isolation remains unverified.
+
 API secrets are stored through native Windows Credential Manager or the explicit
 native in-memory session mode. Saved JSON configuration contains no API key, and
 the renderer receives only credential status. A secret pasted into the API form
 is briefly present in that form before submission, then cleared.
 
 On Windows, application files are under the Roaming AppData directory
-`local.pomelo.pdfreader`. `local-v1` contains reading state, notes and cache; the
+`local.pomelo.pdfreader`. `local-v1` contains workspace layout, recent paths, reading state, notes, cache and AI history; the
 separate API settings JSON contains endpoint/model preferences. These may contain
 document paths and selected text. Clearing translation cache does not delete
 notes. Uninstalling the app does not automatically erase this data.

@@ -30,7 +30,7 @@ export type ReaderState = {
 export type FindOptions = { highlightAll: boolean; caseSensitive: boolean; entireWord: boolean; matchDiacritics: boolean };
 export type ReaderEvent = { type: 'state'; state: ReaderState } | { type: 'error'; message: string } | { type: 'export-requested' } | { type: 'file-open-requested'; bytes: Uint8Array; filename: string }
   | { type: 'annotations'; workspace: AnnotationWorkspace } | { type: 'annotations-open' }
-  | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' } | { type: 'cite-document' };
+  | { type: 'focus' } | { type: 'ask-selection' } | { type: 'shortcut'; keys: KeyboardEventInit & { key: string } } | { type: 'dismiss-menus' } | { type: 'translate-selection' } | { type: 'selection-copied' } | { type: 'cite-document' };
 type Pending = { resolve: (value: any) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 export type NativePageLayout = {
   width: number; height: number;
@@ -73,7 +73,8 @@ export class ReaderAdapter {
     else if (message.type === 'export-requested') this.onEvent({ type: 'export-requested' });
     else if (message.type === 'file-open-requested') this.onEvent({ type: 'file-open-requested', bytes: message.bytes, filename: message.filename });
     else if (message.type === 'annotations') this.onEvent({ type: 'annotations', workspace: message.workspace });
-    else if (['annotations-open', 'dismiss-menus', 'translate-selection', 'selection-copied', 'cite-document'].includes(message.type)) this.onEvent({ type: message.type });
+    else if (message.type === 'shortcut' && typeof message.keys?.key === 'string') this.onEvent({ type: 'shortcut', keys: message.keys });
+    else if (['focus', 'ask-selection', 'annotations-open', 'dismiss-menus', 'translate-selection', 'selection-copied', 'cite-document'].includes(message.type)) this.onEvent({ type: message.type });
   };
   private rejectPending(reason: string) {
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(reason)); }
@@ -99,6 +100,8 @@ export class ReaderAdapter {
     try { return await this.request('open', { bytes, filename, nativeLayout: !!this.nativeLayout }, [bytes.buffer as ArrayBuffer]); }
     catch (error) { if (id === this.documentId) this.documentId = ''; throw error; }
   }
+  locateSource(page: number, position?: { x: number; y: number }) { return this.request<void>('locate-source', { page, position }); }
+  pageText(page: number) { return this.request<string>('page-text', { page }); }
   flush() { return this.request<ReaderState>('flush'); }
   export() { return this.request<{ bytes: Uint8Array; token: string }>('export'); }
   markExported(token: string) { return this.request<ReaderState>('exported', { token }); }

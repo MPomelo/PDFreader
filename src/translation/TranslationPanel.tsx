@@ -6,7 +6,7 @@ import { repository, cacheKey } from '../local/repository';
 import { Pin20Regular, Dismiss20Regular, Settings20Regular } from '@fluentui/react-icons';
 
 export const API_SETTINGS_CHANGED = 'pdfreader-api-settings-changed';
-type Props = { mode?: 'panel' | 'settings'; settingsSection?: 'translation' | 'api'; active?: boolean; automatic?: boolean; onAutomatic?: (enabled: boolean) => void; onDirtyChange?: (dirty: boolean) => void; showMetadata?: boolean; showOriginal?: boolean; reader: ReaderState | null; visible: boolean; settingsOpen: boolean;
+type Props = { keepSnapshot?: boolean; mode?: 'panel' | 'settings'; settingsSection?: 'translation' | 'api'; active?: boolean; automatic?: boolean; onAutomatic?: (enabled: boolean) => void; onDirtyChange?: (dirty: boolean) => void; showMetadata?: boolean; showOriginal?: boolean; reader: ReaderState | null; visible: boolean; settingsOpen: boolean;
   onSettings: (open: boolean) => void; onComment: () => void; disabled: boolean; documentKey?: string; documentName?: string; floating?: boolean; onPin?: () => void; onClose?: () => void; translateSignal?: number };
 export type DisplayResult = { response: ApiResult; original: string; originalRaw: string; page: number; test: boolean; domain?: string; language?: string; cached?: boolean; testKind?: 'test' | 'math-test'; service: string; outcome: 'complete' | 'streaming' | 'cancelled' | 'error' };
 const prompts = {
@@ -14,7 +14,7 @@ const prompts = {
   academic: '忠实翻译学术文本，保留公式、引用编号、变量及 Markdown 结构；只输出译文，不补写原文缺失内容。',
   ai: '准确翻译计算机与人工智能论文，注意模型、训练流程、数据集和指标术语；保留数学公式、变量、引用编号，只输出译文。',
 };
-export function TranslationPanel({ mode = 'panel', settingsSection = 'translation', active = true, automatic = false, onAutomatic, onDirtyChange, showMetadata = false, showOriginal = false, reader, visible, settingsOpen, onSettings, onComment, disabled, documentKey = '', documentName = '', floating, onPin, onClose, translateSignal = 0 }: Props) {
+export function TranslationPanel({ keepSnapshot = false, mode = 'panel', settingsSection = 'translation', active = true, automatic = false, onAutomatic, onDirtyChange, showMetadata = false, showOriginal = false, reader, visible, settingsOpen, onSettings, onComment, disabled, documentKey = '', documentName = '', floating, onPin, onClose, translateSignal = 0 }: Props) {
   const [config, setConfig] = useState<ApiConfig | null>(null);
   const [saved, setSaved] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -70,7 +70,7 @@ export function TranslationPanel({ mode = 'panel', settingsSection = 'translatio
   }, []);
   useLayoutEffect(() => {
     const previous = previousContext.current;
-    if (documentId !== previous.documentId || (selectionKey && selectionKey !== previous.selectionKey)) {
+    if (documentId !== previous.documentId || (!keepSnapshot && selectionKey && selectionKey !== previous.selectionKey)) {
       gate.current.invalidate(); runLock.current = false; setBusy(''); setResult(null); updateLive(null); setError('');
     }
     previousContext.current = { documentId, text, selectionKey };
@@ -148,7 +148,7 @@ export function TranslationPanel({ mode = 'panel', settingsSection = 'translatio
         const accumulator = new StreamAccumulator();
         updateLive({ ...metadata, outcome: 'streaming', response: { requestId: id, documentId: source.documentId, text: '', reasoning: '', model: profile.model, elapsedMs: 0, usage: null, models: [] } });
         response = await api.stream(request, chunk => {
-          if (!gate.current.accepts(generation, id) || chunk.requestId !== id || chunk.documentId !== source.documentId || context.current.documentId !== source.documentId || settingsRef.current !== configSnapshot || (kind === 'translate' && context.current.selectionKey && context.current.selectionKey !== source.selectionKey)) return;
+          if (!gate.current.accepts(generation, id) || chunk.requestId !== id || chunk.documentId !== source.documentId || context.current.documentId !== source.documentId || settingsRef.current !== configSnapshot || (!keepSnapshot && kind === 'translate' && context.current.selectionKey && context.current.selectionKey !== source.selectionKey)) return;
           try {
             if (accumulator.push(chunk)) updateLive({ ...metadata, outcome: 'streaming', response: { requestId: id, documentId: source.documentId, text: accumulator.text, reasoning: accumulator.reasoning, model: profile.model, elapsedMs: 0, usage: null, models: [] } });
           } catch (error) {
@@ -158,7 +158,7 @@ export function TranslationPanel({ mode = 'panel', settingsSection = 'translatio
         });
       } else response = await api.request(request);
       if (!gate.current.accepts(generation, id) || settingsRef.current !== configSnapshot || context.current.documentId !== source.documentId || response.requestId !== id || response.documentId !== source.documentId) return;
-      if (kind === 'translate' && context.current.selectionKey && context.current.selectionKey !== source.selectionKey) return;
+      if (!keepSnapshot && kind === 'translate' && context.current.selectionKey && context.current.selectionKey !== source.selectionKey) return;
       if (kind === 'models') { setModels(response.models); setNotice(response.models.length ? `已读取 ${response.models.length} 个模型，也可手填。` : '模型列表为空，请手填。'); }
       else { setResult({ response, ...metadata, outcome: 'complete' }); updateLive(null); if (key) void repository.cache(documentKey, key, response).catch(() => setNotice('译文已完成，但本地缓存未保存；请查看本地数据提示。')); }
     } catch (error) {
@@ -169,7 +169,13 @@ export function TranslationPanel({ mode = 'panel', settingsSection = 'translatio
   }
   function cancel() { gate.current.invalidate(); runLock.current = false; setBusy(''); setNotice('已取消请求，保留的内容尚未完成。'); if (latestLive.current) updateLive({ ...latestLive.current, outcome: 'cancelled' }); }
   runRef.current = run;
-  useEffect(() => { if (translateSignal && !disabled) void runRef.current('translate'); }, [translateSignal]);
+  const appliedSignal = useRef(0);
+  useEffect(() => {
+    if (!translateSignal || appliedSignal.current === translateSignal || disabled || !config || !profile) return;
+    appliedSignal.current = translateSignal;
+    if (keepSnapshot && runLock.current) cancel();
+    void runRef.current('translate');
+  }, [translateSignal, disabled, config, profile, keepSnapshot]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key !== 'Enter' || event.defaultPrevented) return;

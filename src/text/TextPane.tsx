@@ -11,6 +11,8 @@ import { copyText, supportsNativeAttachments, type TextTab } from './document';
 import './text.css';
 
 export interface TextEditor {
+  selection(): { text: string; line: number };
+  locate(line: number, text: string): void;
   find(): void;
   undo(): void;
   redo(): void;
@@ -138,6 +140,22 @@ export function TextPane({ tab, active, busy, register, onEdit, onMode, onImages
     });
     controller.current = view;
     register(tab.id, {
+      selection() {
+        const range = view.state.selection.main;
+        return { text: view.state.sliceDoc(range.from, range.to), line: view.state.doc.lineAt(range.from).number };
+      },
+      locate(line, text) {
+        const target = view.state.doc.line(Math.min(line, view.state.doc.lines));
+        const contents = view.state.doc.sliceString(target.from);
+        const match = text ? contents.indexOf(text) : -1;
+        if (match === -1 || match >= target.length) {
+          view.dispatch({ selection: { anchor: target.from }, scrollIntoView: true });
+        } else {
+          const start = target.from + match;
+          view.dispatch({ selection: { anchor: start, head: start + text.length }, scrollIntoView: true });
+        }
+        view.focus();
+      },
       find() {
         if (editorHost.current?.parentElement?.dataset.mode === 'preview') callbacks.current.onMode(tab.id, 'split');
         requestAnimationFrame(() => openSearchPanel(view));

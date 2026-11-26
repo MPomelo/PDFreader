@@ -115,6 +115,9 @@ async function runSelectionAction(action, selected = precise.current) {
   } else if (action === 'translate') {
     updateSelection(selected);
     if (selection) post({ type: 'translate-selection' });
+  } else if (action === 'ask') {
+    updateSelection(selected);
+    if (selection) post({ type: 'ask-selection' });
   } else if (action === 'citation') post({ type: 'cite-document' });
   else if (action === 'comment') commentSelection('pdfreader_selection_toolbar', selected);
   else addMarkup(action, 'pdfreader_selection_toolbar', selected);
@@ -365,7 +368,21 @@ window.addEventListener('message', event => {
         if (dest) void app.pdfLinkService.goToDestination(dest);
       } else {
         if (!activeDocument || activeDocument !== app.pdfDocument) throw Error('没有可操作的文档');
-        if (message.type === 'citation-metadata') {
+        if (message.type === 'page-text') {
+          const page = await activeDocument.getPage(message.page);
+          const text = await page.getTextContent();
+          reply(text.items.map(item => typeof item.str === 'string' ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('').trim());
+        } else if (message.type === 'locate-source') {
+          const { page, position } = message;
+          const view = app.pdfViewer.getPageView(page - 1);
+          if (!view) throw Error('此来源页已不可用。');
+          if (position && [position.x, position.y].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) {
+            const { viewport } = view;
+            const [x, y] = viewport.convertToPdfPoint(position.x * viewport.width, position.y * viewport.height);
+            app.pdfViewer.scrollPageIntoView({ pageNumber: page, destArray: [null, { name: 'XYZ' }, x, y, null], ignoreDestinationZoom: true });
+          } else app.pdfViewer.scrollPageIntoView({ pageNumber: page });
+          reply();
+        } else if (message.type === 'citation-metadata') {
           citationMetadata ??= readCitationMetadata(activeDocument).catch(error => {
             if (message.documentId === documentId) citationMetadata = null;
             throw error;
@@ -464,9 +481,22 @@ window.addEventListener('message', event => {
     }
   });
 });
+for (const event of ['pointerdown', 'focusin']) {
+  document.addEventListener(event, () => {
+    if (hostToolbar && activeDocument) post({ type: 'focus' });
+  }, true);
+}
 // Route shell shortcuts from inside the embedded Viewer, including editing focus.
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
+  if (event.isComposing || event.keyCode === 229) return;
+  const forward = () => post({ type: 'shortcut', keys: { key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey } });
+  if (hostToolbar && !app.overlayManager?.active && key === 'f6') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    forward();
+    return;
+  }
   if (!event.isComposing && event.keyCode !== 229 && !event.altKey && !app.overlayManager?.active &&
       (key === 'escape' || key === 'enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)) && textBoxStyle()) {
     event.preventDefault();
@@ -488,9 +518,7 @@ window.addEventListener('keydown', event => {
   if (hostToolbar && !event.altKey && (event.ctrlKey || event.metaKey) &&
       (key === 'f' && !event.shiftKey || key === 'g')) {
     event.preventDefault(); event.stopImmediatePropagation();
-    if (!app.overlayManager?.active) parent.dispatchEvent(new KeyboardEvent('keydown', {
-      key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey, cancelable: true,
-    }));
+    if (!app.overlayManager?.active) forward();
     return;
   }
   if (hostToolbar && key === 'escape' && !event.isComposing && !selectionMenu.isOpen && !app.overlayManager?.active &&
@@ -502,17 +530,17 @@ window.addEventListener('keydown', event => {
   }
   if ((event.ctrlKey || event.metaKey) && (['w','tab'].includes(event.key.toLowerCase()) || /^[1-9]$/.test(event.key))) {
     event.preventDefault(); event.stopImmediatePropagation();
-    parent.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, ctrlKey: true, shiftKey: event.shiftKey })); return;
+    forward(); return;
   }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'Enter') {
     if (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable=true]')) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, shiftKey: true }));
+    forward();
     return;
   }
   if ((event.ctrlKey || event.metaKey) && ['o', 's'].includes(event.key.toLowerCase())) {
     event.preventDefault(); event.stopImmediatePropagation();
-    parent.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, ctrlKey: true }));
+    forward();
   }
 }, true);
 post({ type: 'ready' });

@@ -2,16 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Dismiss20Regular, Settings20Regular, Translate20Regular, PlugConnected20Regular, Database20Regular } from '@fluentui/react-icons';
 import { TranslationPanel } from '../translation/TranslationPanel';
 import { repository, exportNotes, TRANSLATION_FONT_SIZES, type ReaderPreferences } from '../local/repository';
+import { ChatSettings } from '../chat/ChatSettings';
 import { ACCENTS, type Accent, type ThemeMode } from './appearance';
-export type SettingsSection = 'general' | 'translation' | 'api' | 'data';
-export function SettingsDialog({ open, initialSection, onClose, theme, onTheme, accent, onAccent, preferences, onPreferences, automatic, onAutomatic, documentKey }: { open: boolean; initialSection: SettingsSection; onClose: () => void; theme: ThemeMode; onTheme: (theme: ThemeMode) => void; accent: Accent; onAccent: (accent: Accent) => void; preferences: ReaderPreferences; onPreferences: (preferences: ReaderPreferences) => void; automatic: boolean; onAutomatic: (enabled: boolean) => void; documentKey: string }) {
+export type SettingsSection = 'general' | 'translation' | 'api' | 'data' | 'chat';
+export function SettingsDialog({ open, initialSection, onClose, theme, onTheme, accent, onAccent, preferences, onPreferences, automatic, onAutomatic, documentKey, onClearChat }: { open: boolean; initialSection: SettingsSection; onClose: () => void; theme: ThemeMode; onTheme: (theme: ThemeMode) => void; accent: Accent; onAccent: (accent: Accent) => void; preferences: ReaderPreferences; onPreferences: (preferences: ReaderPreferences) => void; automatic: boolean; onAutomatic: (enabled: boolean) => void; documentKey: string; onClearChat: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [dirty, setDirty] = useState(false), [confirm, setConfirm] = useState(false), [notice, setNotice] = useState('');
   useEffect(() => { if (open) { setSection(initialSection); setConfirm(false); setDirty(false); setNotice(''); dialog.current?.showModal(); } else dialog.current?.close(); }, [open, initialSection]);
   function close() { if (dirty) setConfirm(true); else onClose(); }
   async function dataAction(action: () => Promise<unknown>, message: string) { try { const result = await action(); setNotice(result === null ? '已取消导出' : message); } catch (error) { setNotice(String(error)); } }
-  const categories = [{ id: 'general', label: '阅读与外观', icon: <Settings20Regular /> }, { id: 'translation', label: '翻译偏好', icon: <Translate20Regular /> }, { id: 'api', label: 'API 服务', icon: <PlugConnected20Regular /> }, { id: 'data', label: '本地数据', icon: <Database20Regular /> }] as const;
+  const categories = [{ id: 'general', label: '阅读与外观', icon: <Settings20Regular /> }, { id: 'translation', label: '翻译偏好', icon: <Translate20Regular /> }, { id: 'api', label: 'API 服务', icon: <PlugConnected20Regular /> }, { id: 'chat', label: 'AI 对话', icon: <PlugConnected20Regular /> }, { id: 'data', label: '本地数据', icon: <Database20Regular /> }] as const;
   return <dialog ref={dialog} className="settings-dialog" aria-labelledby="settings-title" onCancel={event => { event.preventDefault(); close(); }}>
     <header className="settings-title"><h1 id="settings-title">设置</h1><button autoFocus aria-label="关闭设置" title="关闭设置" onClick={close}><Dismiss20Regular /></button></header>
     {open && <div className="settings-body"><nav className="settings-nav" aria-label="设置分类">{categories.map(category => <button key={category.id} aria-pressed={section === category.id} onClick={() => setSection(category.id)}>{category.icon}{category.label}</button>)}</nav>
@@ -28,6 +29,7 @@ export function SettingsDialog({ open, initialSection, onClose, theme, onTheme, 
           <label className="checkbox"><input type="checkbox" checked={preferences.showMetadata} onChange={event => onPreferences({ ...preferences, showMetadata: event.target.checked })} />直接显示模型、耗时与用量</label><p className="muted">阅读与外观设置自动保存。</p>
         </section>}
         <div hidden={section !== 'translation' && section !== 'api'}><TranslationPanel mode="settings" settingsSection={section === 'api' ? 'api' : 'translation'} reader={null} visible settingsOpen onSettings={() => {}} onComment={() => {}} disabled={false} active={false} automatic={automatic} onAutomatic={onAutomatic} onDirtyChange={setDirty} /></div>
+        {section === 'chat' && <ChatSettings onClear={onClearChat} />}
         {section === 'data' && <section><h2>本地数据</h2><p className="muted">缓存与笔记分开保存。清理缓存不会删除笔记。</p><div className="data-actions"><button disabled={!documentKey} onClick={() => { void dataAction(() => repository.clearCache(documentKey), '当前文档缓存已清理'); }}>清理当前文档缓存</button><button onClick={() => { void dataAction(() => exportNotes(repository.snapshot.notes), '笔记导出操作已完成'); }}>导出全部笔记</button></div><p className="muted">最近文件与笔记可在工具栏左侧“文档”中管理。</p></section>}
         {notice && <p className="settings-notice" role="status">{notice}</p>}
       </div>

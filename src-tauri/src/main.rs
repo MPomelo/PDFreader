@@ -6,6 +6,7 @@ mod secrets;
 mod http;
 mod sse;
 mod translation;
+mod chat;
 mod local;
 mod launch;
 mod poppler;
@@ -113,9 +114,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![choose_pdf, choose_documents, startup_pdf, launch::startup_pdfs, read_pdf, export_pdf, finish_close,
             native_page_layout, text::read_text, text::choose_text_destination, text::save_text,
             text::store_text_image, text::read_text_image, text::read_dropped_image,
-            local::local_read, local::local_write, local::local_recover, local::reopen_pdf, local::export_notes,
+            local::local_read, local::local_write, local::local_recover, local::reopen_pdf, local::reopen_workspace_document, local::export_notes, local::export_chat,
             translation::api_load, translation::api_save, translation::api_secret_status,
-            translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel])
+            translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel,
+            chat::chat_secret_status, chat::chat_secret_save, chat::chat_secret_delete, chat::chat_request])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Always let the shell flush active text/ink before deciding.

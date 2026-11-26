@@ -1,0 +1,15 @@
+.chat-pane { display: flex; flex: 1; flex-direction: column; gap: 6px; min-height: 0; color: var(--text); background: var(--panel); font-size: 13px; }
+.chat-pane .workspace-feature-header { padding-inline: 8px; gap: 4px; }
+.chat-pane input:not([type=checkbox]), .chat-pane select { max-width: 145px; }
+.chat-pane button { font-size: 12px; min-height: 27px; }
+.chat-messages { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px; }
+.chat-turn + .chat-turn { margin-top: 12px; border-top: 1px solid var(--border); }
+.chat-question { background: var(--surface); padding: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-model { color: var(--muted); font-size: 12px; margin-block: 6px; }
+.chat-form { max-height: 65%; overflow: auto; padding: 0 8px 8px; border-top: 1px solid var(--border); }
+.chat-form .field { margin: 5px 0; }
+.chat-form .field textarea { min-height: 48px; resize: vertical; }
+.chat-materials, .chat-history { max-height: 110px; overflow: auto; padding: 2px 8px; margin: 0; list-style: none; }
+.chat-materials li, .chat-history li { display: flex; gap: 6px; justify-content: space-between; align-items: start; }
+.chat-materials p { margin: 5px; }
+.chat-settings h3 { font-size: 14px; margin-top: 20px; }

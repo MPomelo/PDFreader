@@ -69,6 +69,16 @@ fn write_config(path: &Path, config: &Config) -> Result<(), String> {
 }
 #[derive(Default)]
 pub struct ApiState { pub secrets: SecretStore, config_lock: Mutex<()>, jobs: Mutex<Jobs> }
+impl ApiState {
+    pub fn start_job(&self, id: &str) -> Result<Arc<AtomicBool>, String> {
+        if id.is_empty() || id.len() > 128 { return Err("请求标识无效".into()); }
+        self.jobs.lock().map_err(|_| "任务状态不可用")?.start(id)
+    }
+    pub fn finish_job(&self, id: &str) -> Result<(), String> {
+        self.jobs.lock().map_err(|_| "任务状态不可用")?.running.remove(id);
+        Ok(())
+    }
+}
 #[derive(Default)]
 struct Jobs { running: HashMap<String, Arc<AtomicBool>>, early_cancel: std::collections::VecDeque<String> }
 impl Jobs {

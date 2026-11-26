@@ -1,4 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { defaultChat, validateChat, type ChatData, type ChatPreferences, type Conversation } from '../chat/model';
+import type { SavedWorkspace } from '../workspace/layout';
 import type { ApiConfig, ApiResult, Profile } from '../translation/client';
 import { DEFAULT_ACCENT, isAccent, type Accent, type ThemeMode } from '../ui/appearance';
 export type Layout = { left: boolean; right: boolean; reading: boolean; floating: boolean; leftWidth: number; rightWidth: number; theme: ThemeMode; accent?: Accent };
@@ -6,22 +8,23 @@ export type Recent = { fingerprint: string; name: string; path: string; page: nu
 export const TRANSLATION_FONT_SIZES = [14, 16, 18, 20];
 export type ReaderPreferences = { restoreProgress: boolean; defaultZoom: string; selectionPopup: boolean; showMetadata: boolean; showOriginal: boolean; translationFontSize: number };
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = { restoreProgress: true, defaultZoom: 'auto', selectionPopup: true, showMetadata: false, showOriginal: false, translationFontSize: TRANSLATION_FONT_SIZES[0] };
-export type Book = { version: 1; layout: Layout; recents: Recent[]; preferences?: ReaderPreferences };
+export type Book = { version: 1; layout: Layout; recents: Recent[]; preferences?: ReaderPreferences; workspace?: unknown };
 export type Note = { id: string; fingerprint: string; name: string; page: number; original: string; originalRaw: string; markdown: string; model: string; service: string; domain: string; language: string; time: string };
 type Notebook = { version: 1; notes: Note[] };
 type Cache = { version: 1; entries: { key: string; response: ApiResult; time: string }[] };
-type RecordData = Book | Notebook | Cache;
-type Kind = 'state' | 'notes' | 'cache';
+type RecordData = Book | Notebook | Cache | ChatData;
+type Kind = 'state' | 'notes' | 'cache' | 'chat';
 export type Envelope = { version: number; revision: number; data: unknown };
 export type Backend = { read(kind: Kind, document: string): Promise<Envelope>; write(kind: Kind, document: string, revision: number, data: unknown): Promise<Envelope>; recover(kind: Kind, document: string): Promise<string> };
 export const defaultLayout = (): Layout => {
   let widths; try { widths = JSON.parse(localStorage.getItem('pdfreader.panel-widths.v1') || 'null'); } catch { /* optional old preference */ }
   return { left: false, right: false, reading: false, floating: false, leftWidth: Math.max(160, Math.min(400, widths?.left || 220)), rightWidth: Math.max(280, Math.min(720, widths?.right || 340)), theme: 'system', accent: DEFAULT_ACCENT };
 };
-function empty(kind: Kind): RecordData { return kind === 'state' ? { version: 1, layout: defaultLayout(), recents: [] } : kind === 'notes' ? { version: 1, notes: [] } : { version: 1, entries: [] }; }
+function empty(kind: Kind): RecordData { return kind === 'chat' ? defaultChat() : kind === 'state' ? { version: 1, layout: defaultLayout(), recents: [] } : kind === 'notes' ? { version: 1, notes: [] } : { version: 1, entries: [] }; }
 const hashPattern = /^[a-f0-9]{64}$/;
 const text = (value: unknown, max = 200000) => typeof value === 'string' && value.length <= max;
 export function validate(kind: Kind, value: unknown): RecordData {
+  if (kind === 'chat') return validateChat(value);
   const data = value as any;
   if (!data || data.version !== 1) throw Error('本地数据版本或结构无效，未覆盖原文件');
   if (kind === 'state') {
@@ -103,6 +106,15 @@ export class LocalRepository {
     await Promise.all(['state','notes'].map(async kind => { try { const record = await this.read(kind as Kind); if (kind === 'state') this.snapshot.book = record.data as Book; else this.snapshot.notes = (record.data as Notebook).notes; } catch { /* displayed, never auto-overwritten */ } }));
     this.snapshot.ready = true; this.publish(); return this.snapshot;
   }
+  async chat() { return (await this.read('chat')).data as ChatData; }
+  saveChatPreferences(preferences: ChatPreferences) { return this.update('chat', '', (data: ChatData) => ({ ...data, preferences })); }
+  saveConversation(conversation: Conversation) { return this.update('chat', '', (data: ChatData) => ({
+    ...data, conversations: [conversation, ...data.conversations.filter(item => item.id !== conversation.id)],
+  })); }
+  deleteConversations(ids?: string[]) { return this.update('chat', '', (data: ChatData) => ({
+    ...data, conversations: ids ? data.conversations.filter(item => !ids.includes(item.id)) : [],
+  })); }
+  saveWorkspace(workspace: SavedWorkspace) { return this.update('state', '', (book: Book) => ({ ...book, workspace })); }
   saveLayout(layout: Layout) { return this.update('state', '', (book: Book) => ({ ...book, layout })); }
   savePreferences(preferences: ReaderPreferences) { return this.update('state', '', (book: Book) => ({ ...book, preferences })); }
   progress(recent: Recent) { return this.update('state', '', (book: Book) => ({ ...book, recents: [recent, ...book.recents.filter(r => r.fingerprint !== recent.fingerprint && (!recent.path || r.path !== recent.path))].slice(0,20) })); }

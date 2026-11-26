@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Add20Regular, DocumentPdf20Regular, DocumentText20Regular, Dismiss20Regular, FolderOpen20Regular } from '@fluentui/react-icons';
+import { DocumentPdf20Regular, Dismiss20Regular, FolderOpen20Regular } from '@fluentui/react-icons';
 import { ReaderAdapter, type ReaderEvent, type ReaderState, type ReaderAction, type AnnotationWorkspace, type AnnotationDraft, type AnnotationAction } from './reader/ReaderAdapter';
 import { DocumentPane, type PdfTab } from './reader/DocumentPane';
-import { adjacentTabId, shortcutTabId } from './reader/tabs';
+import { shortcutTabId } from './reader/tabs';
 import { mayLeaveDocument, type LeaveChoice } from './reader/leave-document';
 import { TranslationPanel } from './translation/TranslationPanel';
 import { LibraryPanel } from './local/LibraryPanel';
@@ -27,6 +27,11 @@ import {
   saveBrowserText, textDirty, type OpenedText, type TextEncoding, type TextKind, type TextTab,
 } from './text/document';
 import { imageName, isImage, markdownUrl, readDroppedImage, saveNativeText, storeImage } from './text/attachments';
+import { WorkspaceSeparator, WorkspaceTabs, type HeaderTab } from './workspace/WorkspaceTabs';
+import { columns, columnOf, columnName, defaultWorkspace, move, readWorkspace, remove, saveWorkspace, select, type Column, type Resource, type Workspace } from './workspace/layout';
+import { WorkspaceTranslation } from './workspace/WorkspaceTranslation';
+import { ChatPane, type Material } from './chat/ChatPane';
+import { conversationName, type Conversation } from './chat/model';
 import './ui/styles.css';
 import './ui/stage05.css';
 import './ui/workspace.css';
@@ -47,6 +52,15 @@ function dirty(tab: DocumentTab) {
 function App() {
   const [tabs, setTabs] = useState<DocumentTab[]>([]), tabsRef = useRef<DocumentTab[]>([]);
   const [activeId, setActiveId] = useState(''), activeRef = useRef('');
+  const [workspace, setWorkspace] = useState(defaultWorkspace), workspaceRef = useRef(workspace);
+  const [extras, setExtras] = useState<Resource[]>([]), extrasRef = useRef(extras);
+  const [missing, setMissing] = useState<Record<string, string>>({});
+  const [maximized, setMaximized] = useState<Column | null>(null), maximizedRef = useRef(maximized); maximizedRef.current = maximized;
+  const [layoutReady, setLayoutReady] = useState(false), preserveLayout = useRef(false);
+  const [translationSignals, setTranslationSignals] = useState<Record<string, { pdf: string; count: number }>>({});
+  const [chatMaterials, setChatMaterials] = useState<Record<string, Material[]>>({});
+  const chatStops = useRef(new Map<string, () => Promise<void>>());
+  const [chatRevisions, setChatRevisions] = useState<Record<string, number>>({});
   const panes = useRef(new Map<string, ReaderAdapter>());
   const editors = useRef(new Map<string, TextEditor>());
   const imageInput = useRef<HTMLInputElement>(null);
@@ -77,25 +91,82 @@ function App() {
   const [dragging, setDragging] = useState(false), [viewport, setViewport] = useState(window.innerWidth);
   const [preferredWidths, setPreferredWidths] = useState(() => { try { return parseWidths(localStorage.getItem(WIDTHS_KEY)); } catch { return DEFAULT_WIDTHS; } });
   const active = tabs.find(tab => tab.id === activeId) || null;
+  const feature = extras.find(tab => tab.id === activeId);
   const reader = active?.kind === 'pdf' ? active.state : null;
   const textBoxStyle = reader?.textBox;
   const text = active && active.kind !== 'pdf' ? active : null;
   const citationTab = tabs.find(tab => tab.id === citationId), citationAdapter = panes.current.get(citationId);
   const widths = panelLayout(preferredWidths, viewport, left && !reading, right && !reading && !floating && !text);
   const layout: Layout = { left, right, reading, floating, leftWidth: preferredWidths.left, rightWidth: preferredWidths.right, theme, accent };
+  const openColumns = columns.filter(column => !workspace.collapsed[column] && (!maximized || maximized === column));
+  const showUpper = openColumns.includes('upper'), showLower = openColumns.includes('lower'), showRight = openColumns.includes('right');
   const layoutRef = useRef(layout); layoutRef.current = layout;
   function updateTabs(mutate: (previous: DocumentTab[]) => DocumentTab[]) { const next = mutate(tabsRef.current); tabsRef.current = next; setTabs(next); }
+  function updateWorkspace(next: Workspace) {
+    workspaceRef.current = next;
+    setWorkspace(next);
+    const id = next.selected[next.focus];
+    if (activeRef.current !== id) {
+      dismissToolbarMenus();
+      panes.current.get(activeRef.current)?.dismissSelectionMenu();
+    }
+    activeRef.current = id;
+    setActiveId(id);
+  }
+  function focusColumn(column: Column, force = false) {
+    if (exclusive.current && !force) return;
+    if (maximizedRef.current && maximizedRef.current !== column) setMaximized(null);
+    updateWorkspace(select(workspaceRef.current, column));
+  }
+  function moveTab(id: string, column: Column, before?: string) {
+    if (exclusive.current || !columnOf(workspaceRef.current, id)) return;
+    if (maximizedRef.current && maximizedRef.current !== column) setMaximized(null);
+    updateWorkspace(move(workspaceRef.current, id, column, before));
+  }
+  function collapseColumn(column: Column) {
+    const current = workspaceRef.current;
+    const next = { ...current, collapsed: { ...current.collapsed, [column]: true } };
+    if (maximizedRef.current === column) setMaximized(null);
+    updateWorkspace(current.focus === column ? select(next, columns.find(item => !next.collapsed[item]) ?? 'upper') : next);
+  }
+  function resetWorkspace() {
+    preserveLayout.current = false;
+    setMaximized(null);
+    const defaults = defaultWorkspace();
+    updateWorkspace({ ...workspaceRef.current, lowerShare: defaults.lowerShare, rightShare: defaults.rightShare });
+  }
+  function updateExtras(next: Resource[]) { extrasRef.current = next; setExtras(next); }
+  function addFeature(kind: 'translation' | 'chat', column: Column, source?: string) {
+    const id = crypto.randomUUID();
+    updateExtras([...extrasRef.current, { id, kind, name: kind === 'chat' ? 'AI 对话' : '译文', source }]);
+    if (maximizedRef.current && maximizedRef.current !== column) setMaximized(null);
+    updateWorkspace(move(workspaceRef.current, id, column));
+    return id;
+  }
+  function addDocument(tab: DocumentTab, column: Column, restoring = false) {
+    updateTabs(items => [...items, tab]);
+    if (!restoring) {
+      if (maximizedRef.current && maximizedRef.current !== column) setMaximized(null);
+      updateWorkspace(move(workspaceRef.current, tab.id, column));
+    }
+  }
+  function workspaceSnapshot(workspace = workspaceRef.current) {
+    const documents: Resource[] = tabsRef.current.filter(tab => tab.path).map(tab => ({
+      id: tab.id, kind: tab.kind, name: tab.name, path: tab.path,
+    }));
+    return saveWorkspace(workspace, [...documents, ...extrasRef.current.filter(tab => tab.kind !== 'chat' || !temporaryChats.current.has(tab.id))]);
+  }
+  const temporaryChats = useRef(new Set<string>());
   function patchText(id: string, patch: Partial<TextTab>) {
     updateTabs(items => items.map(tab => tab.id === id && tab.kind !== 'pdf' ? { ...tab, ...patch } : tab));
   }
-  function createText(kind: TextKind) {
+  function createText(kind: TextKind, column = workspaceRef.current.focus) {
     if (exclusive.current) return;
     const extension = kind === 'txt' ? '.txt' : '.md';
     let name = '未命名' + extension;
     for (let index = 2; tabsRef.current.some(tab => tab.name === name); index++) name = `未命名-${index}${extension}`;
     const tab = newTextTab(kind, name);
-    updateTabs(items => [...items, tab]);
-    activate(tab.id);
+    addDocument(tab, column);
   }
   function registerText(id: string, editor: TextEditor | null) {
     if (editor) editors.current.set(id, editor);
@@ -118,12 +189,10 @@ function App() {
   }
   function activate(id: string, force = false) {
     if (exclusive.current && !force) return;
-    if (id !== activeRef.current) {
-      dismissToolbarMenus();
-      panes.current.get(activeRef.current)?.dismissSelectionMenu();
-    }
-    activeRef.current = id;
-    setActiveId(id);
+    const column = columnOf(workspaceRef.current, id);
+    if (!column) return;
+    if (maximizedRef.current && maximizedRef.current !== column) setMaximized(null);
+    updateWorkspace(select(workspaceRef.current, column, id));
     if (layoutRef.current.left) void panes.current.get(id)?.action('hide-navigation').catch(() => {});
   }
   function openSettings(section: SettingsSection = 'general') { dismissToolbarMenus(); panes.current.get(activeRef.current)?.dismissSelectionMenu(); setSettingsSection(section); setSettingsOpen(true); }
@@ -151,11 +220,11 @@ function App() {
     });
     return openQueue.current;
   }
-  async function openData(bytes: Uint8Array, name: string, path = '', expected = '', page?: number): Promise<string> {
+  async function openData(bytes: Uint8Array, name: string, path = '', expected = '', page?: number, column = workspaceRef.current.focus, restoredId?: string): Promise<string> {
     if (new TextDecoder().decode(bytes.slice(0,5)) !== '%PDF-') throw Error(`${name} 不是有效的 PDF`);
     const fingerprint = await digest(bytes);
     if (expected && fingerprint !== expected) throw Error('所选文件内容不匹配，未替换旧记录。');
-    const existing = tabsRef.current.find((tab): tab is PdfTab => tab.kind === 'pdf' && tab.fingerprint === fingerprint && (path ? tab.path.toLowerCase() === path.toLowerCase() : !tab.path && tab.name === name));
+    const existing = tabsRef.current.find((tab): tab is PdfTab => tab.kind === 'pdf' && (path ? tab.path.toLowerCase() === path.toLowerCase() : !tab.path && tab.name === name && tab.fingerprint === fingerprint));
     if (existing) {
       if (path) updateTabs(items => items.map(tab => tab.id === existing.id ? { ...tab, path } : tab));
       activate(existing.id, true);
@@ -163,11 +232,11 @@ function App() {
       return existing.id;
     }
     const saved = prefsRef.current.restoreProgress ? repository.snapshot.book.recents.find(item => item.fingerprint === fingerprint) : null;
-    const id = crypto.randomUUID();
-    updateTabs(items => [...items, { kind: 'pdf', id, name, path, fingerprint, bytes, initialPage: page || saved?.page || 1, initialZoom: saved?.zoom || prefsRef.current.defaultZoom, state: null }]);
-    activate(id, true); return id;
+    const id = restoredId ?? crypto.randomUUID();
+    addDocument({ kind: 'pdf', id, name, path, fingerprint, bytes, initialPage: page || saved?.page || 1, initialZoom: saved?.zoom || prefsRef.current.defaultZoom, state: null }, column, !!restoredId);
+    return id;
   }
-  async function openText(kind: TextKind, load: (encoding?: TextEncoding) => Promise<OpenedText>) {
+  async function openText(kind: TextKind, load: (encoding?: TextEncoding) => Promise<OpenedText>, column = workspaceRef.current.focus, restoredId?: string) {
     let file = await load();
     setEncodingError('');
     const existing = tabsRef.current.find(tab => tab.kind !== 'pdf' && file.path && tab.path.toLowerCase() === file.path.toLowerCase());
@@ -179,34 +248,37 @@ function App() {
       catch (error) { setEncodingError(String(error)); }
     }
     const tab = openedTextTab(kind, file);
-    updateTabs(items => [...items, tab]);
-    activate(tab.id, true);
+    if (restoredId) tab.id = restoredId;
+    addDocument(tab, column, !!restoredId);
     return tab.id;
   }
-  async function openPath(path: string, expected = '', page?: number) {
+  async function openPath(path: string, expected = '', page?: number, column = workspaceRef.current.focus, restoredId?: string) {
     const kind = documentKind(path);
     if (!kind) throw Error('请选择 PDF、Markdown 或 TXT 文件');
     if (kind !== 'pdf') {
       if (expected) throw Error('请选择匹配的 PDF 文件');
-      return openText(kind, encoding => openNativeText(path, encoding));
+      return openText(kind, encoding => openNativeText(path, encoding), column, restoredId);
     }
     const pdf = await invoke<{ name: string; path: string; bytes: number[] }>('read_pdf', { path });
-    return openData(Uint8Array.from(pdf.bytes), pdf.name, pdf.path, expected, page);
+    return openData(Uint8Array.from(pdf.bytes), pdf.name, pdf.path, expected, page, column, restoredId);
   }
-  async function openPaths(paths: string[]) { for (const path of paths) try { await openPath(path); } catch (error) { setError(String(error)); } }
-  function fileOpen(files: File[]) {
+  async function openPaths(paths: string[], column = workspaceRef.current.focus) { for (const path of paths) try { await openPath(path, '', undefined, column); } catch (error) { setError(String(error)); } }
+  function fileOpen(files: File[], column = workspaceRef.current.focus) {
     return queueOpen(async () => {
       for (const file of files) try {
         const kind = documentKind(file.name);
-        if (kind === 'pdf') await openData(new Uint8Array(await file.arrayBuffer()), file.name);
-        else if (kind) await openText(kind, encoding => openBrowserText(file, encoding));
+        if (kind === 'pdf') await openData(new Uint8Array(await file.arrayBuffer()), file.name, '', '', undefined, column);
+        else if (kind) await openText(kind, encoding => openBrowserText(file, encoding), column);
         else throw Error(`不支持此文档格式：${file.name}`);
       } catch (error) { setError(String(error)); }
     });
   }
-  async function choose() {
+  const pickerColumn = useRef<Column>('upper');
+  async function choose(column = workspaceRef.current.focus) {
+    pickerColumn.current = column;
+    focusColumn(column);
     if (!isTauri()) { input.current?.click(); return; }
-    await runOperation('choosing', async () => { const paths = await invoke<string[]>('choose_documents'); await openPaths(paths); });
+    await runOperation('choosing', async () => { const paths = await invoke<string[]>('choose_documents'); await openPaths(paths, column); });
   }
   async function openRecent(recent: Recent) { await queueOpen(async () => { if (!recent.path || !isTauri()) throw Error('请重新选择同一 PDF，以恢复阅读进度。'); await openPath(await invoke<string>('reopen_pdf',{path:recent.path})); }); }
   async function relocate(recent: Recent) { if (!isTauri()) { input.current?.click(); return; } await runOperation('choosing', async () => { const path = await invoke<string | null>('choose_pdf'); if (path) await openPath(path,recent.fingerprint); }); }
@@ -344,14 +416,25 @@ function App() {
     );
   }
   async function closeTab(id: string) {
+    if (exclusive.current) return;
+    if (!tabsRef.current.some(tab => tab.id === id)) {
+      await chatStops.current.get(id)?.();
+      updateExtras(extrasRef.current.filter(tab => tab.id !== id));
+      setMissing(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)));
+      setTranslationSignals(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)));
+      temporaryChats.current.delete(id);
+      setChatMaterials(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)));
+      updateWorkspace(remove(workspaceRef.current, id));
+      return;
+    }
     await runOperation('closing', async () => { const tab=tabsRef.current.find(tab=>tab.id===id);if(!tab||!await mayClose(tab))return;await persist(tab).catch(()=>{});clearTimeout(progressTimers.current.get(id));progressTimers.current.delete(id);
       draftValues.current.delete(id);
       setAnnotations(previous => { const next = { ...previous }; delete next[id]; return next; });
       setAnnotationTab(previous => previous === id ? '' : previous);
-      const next=adjacentTabId(tabsRef.current.map(tab=>tab.id),id,activeRef.current);updateTabs(items=>items.filter(item=>item.id!==id));activate(next,true);setSignals(previous=>{const next={...previous};delete next[id];return next;}); });
+      updateTabs(items=>items.filter(item=>item.id!==id));updateWorkspace(remove(workspaceRef.current,id));setSignals(previous=>{const next={...previous};delete next[id];return next;}); });
   }
   async function closeWindow() {
-    await runOperation('closing', async () => { for(const tab of [...tabsRef.current]) {if(!await mayClose(tab))return;await persist(tabsRef.current.find(item=>item.id===tab.id)||tab).catch(()=>{});}await repository.saveLayout(layoutRef.current).catch(()=>{});await repository.flush();await invoke('finish_close'); });
+    await runOperation('closing', async () => { const initialWorkspace = workspaceRef.current; for(const tab of [...tabsRef.current]) {if(!await mayClose(tab))return;await persist(tabsRef.current.find(item=>item.id===tab.id)||tab).catch(()=>{});}await Promise.all([...chatStops.current.values()].map(stop => stop()));await repository.saveLayout(layoutRef.current).catch(()=>{});if(layoutReady&&!preserveLayout.current)await repository.saveWorkspace(workspaceSnapshot(initialWorkspace)).catch(()=>{});await repository.flush();await invoke('finish_close'); });
   }
   async function action(action: ReaderAction) { const pane=panes.current.get(activeRef.current);if(action==='thumbnails')setLeft(false);try{await pane?.action(action);}catch(error){setError(String(error));} }
   async function position(page: number, zoom?: string) { const tab=tabsRef.current.find(tab=>tab.id===activeRef.current);if(tab?.kind!=='pdf'||!tab.state)return;try{await panes.current.get(tab.id)?.restore(page,zoom||tab.state.zoom);}catch(error){setError(String(error));} }
@@ -373,15 +456,46 @@ function App() {
     else if (id===activeRef.current) {
       if (event.type === 'annotations-open') showAnnotations(id);
       if (event.type==='dismiss-menus') dismissToolbarMenus();
-      if (event.type==='translate-selection' && !exclusive.current && !modalRef.current) translateFloating(id);
+      if (event.type==='translate-selection' && !exclusive.current && !modalRef.current) requestTranslation(id, true);
       if (event.type==='selection-copied') setNotice('已复制选区');
       if (event.type==='cite-document') openCitation(id);
     }
   }
-  function translateFloating(id = activeRef.current) { if(!id)return;setReading(false);setFloating(true);setRight(true);setSignals(previous=>({...previous,[id]:(previous[id]||0)+1})); }
-  const handlers = useRef({ choose, closeWindow, closeTab, saveTab, openPaths, insertImageBatch });
-  handlers.current = { choose, closeWindow, closeTab, saveTab, openPaths, insertImageBatch };
+  function requestTranslation(id: string, float: boolean) {
+    const current = workspaceRef.current;
+    const column = columnOf(current, id);
+    const target = extrasRef.current.find(tab => tab.kind === 'translation' && (tab.source === id || (tab.source ?? 'upper') === column));
+    setReading(false);
+    if (!target) {
+      setFloating(float);
+      setRight(true);
+      setSignals(previous => ({ ...previous, [id]: (previous[id] ?? 0) + 1 }));
+      return;
+    }
+    const targetColumn = columnOf(current, target.id);
+    if (!targetColumn) return;
+    if (maximizedRef.current && maximizedRef.current !== targetColumn) setMaximized(null);
+    const next = select(current, targetColumn, target.id);
+    updateWorkspace({ ...next, focus: targetColumn === column ? targetColumn : current.focus });
+    setTranslationSignals(previous => ({ ...previous, [target.id]: { pdf: id, count: (previous[target.id]?.count ?? 0) + 1 } }));
+  }
+  const handlers = useRef({ choose, closeWindow, closeTab, saveTab, openPaths, insertImageBatch, cycleColumns, requestTranslation });
+  handlers.current = { choose, closeWindow, closeTab, saveTab, openPaths, insertImageBatch, cycleColumns, requestTranslation };
   const modalRef=useRef(false);modalRef.current=settingsOpen||!!prompt||!!citationTab||!!encodingFile;
+  function cycleColumns(reverse: boolean) {
+    const visible = columns.filter(column => !workspaceRef.current.collapsed[column] && (!maximizedRef.current || maximizedRef.current === column));
+    const index = visible.indexOf(workspaceRef.current.focus);
+    const next = visible[(index + (reverse ? visible.length - 1 : 1)) % visible.length];
+    if (!next) return;
+    focusColumn(next);
+    const id = workspaceRef.current.selected[next];
+    (document.getElementById('document-tab-' + id) ?? document.querySelector<HTMLElement>(`[data-column="${next}"] summary`))?.focus();
+  }
+  useEffect(() => {
+    if (!layoutReady || preserveLayout.current) return;
+    const timer = setTimeout(() => { void repository.saveWorkspace(workspaceSnapshot()).catch(error => setError(String(error))); }, 500);
+    return () => clearTimeout(timer);
+  }, [workspace, extras, layoutReady, tabs.map(tab => tab.path).join('\u0000')]);
   useEffect(()=>repository.subscribe(()=>setLibrary(repository.snapshot)),[]);
   useEffect(()=>{const resize=()=>setViewport(window.innerWidth);window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
   useEffect(() => {
@@ -397,7 +511,38 @@ function App() {
   useEffect(()=>{if(prompt&&!dialog.current?.open)dialog.current?.showModal();if(!prompt&&dialog.current?.open)dialog.current?.close();},[prompt]);
   useEffect(()=>{
     let disposed=false;const releases:(()=>void)[]=[];
-    const local=repository.init().then(snapshot=>{if(!disposed){applyLayout(snapshot.book.layout);const preferences={...DEFAULT_READER_PREFERENCES,...snapshot.book.preferences};setPreferences(preferences);prefsRef.current=preferences;booted.current=true;setLocalReady(true);}return snapshot;});
+    const local=repository.init().then(snapshot=>{if(!disposed){applyLayout(snapshot.book.layout);const preferences={...DEFAULT_READER_PREFERENCES,...snapshot.book.preferences};setPreferences(preferences);prefsRef.current=preferences;setLocalReady(true);}return snapshot;});
+    const restore = local.then(async snapshot => {
+      if (disposed) return false;
+      const saved = readWorkspace(snapshot.book.workspace);
+      if (!saved) {
+        preserveLayout.current = snapshot.book.workspace !== undefined;
+        if (!preserveLayout.current && snapshot.book.layout.right && !snapshot.book.layout.floating) {
+          const id = addFeature('translation', 'right', 'upper');
+          setRight(false);
+          updateWorkspace({ ...workspaceRef.current, focus: 'upper', selected: { ...workspaceRef.current.selected, right: id } });
+        }
+        if (preserveLayout.current) setNotice('无法读取上次的工作区布局。已使用默认布局，原记录仍保留。');
+        return false;
+      }
+      updateWorkspace(saved);
+      updateExtras(saved.resources.filter(resource => resource.kind === 'chat' || resource.kind === 'translation'));
+      if (isTauri()) await runOperation('opening', async () => {
+        for (const resource of saved.resources) {
+          if (!resource.path) continue;
+          try {
+            const path = await invoke<string>('reopen_workspace_document', { path: resource.path });
+            if (!await openPath(path, '', undefined, columnOf(saved, resource.id), resource.id)) throw Error('未选择文件编码');
+          } catch (error) {
+            updateExtras([...extrasRef.current, resource]);
+            setMissing(previous => ({ ...previous, [resource.id]: String(error) }));
+          }
+        }
+      });
+      return true;
+    }).finally(() => {
+      if (!disposed) { booted.current = true; setLayoutReady(true); }
+    });
     if(isTauri())void(async()=>{
       for(const [name,callback] of [['images-dropped', (event: { payload: { paths: string[]; x: number; y: number } }) => {
         const id = activeRef.current;
@@ -409,46 +554,141 @@ function App() {
         }
         void handlers.current.insertImageBatch(id, () => Promise.all(paths.map(readDroppedImage)), editors.current.get(id)?.atCoordinates(x, y));
       }],['pdfs-dropped',(event:{payload:string[]})=>{void queueOpen(()=>handlers.current.openPaths(event.payload));}],['pdfs-queued',()=>{void queueOpen(async()=>{const batch=await invoke<{paths:string[];errors:string[]}>('startup_pdfs');if(batch.errors.length)setError(batch.errors.join('\n'));await handlers.current.openPaths(batch.paths);});}],['pdf-open-error',(event:{payload:string})=>setError(event.payload)],['close-requested',()=>{void handlers.current.closeWindow();}]] as const){const release=await listen<any>(name,callback);if(disposed)release();else releases.push(release);}
-      try{const snapshot=await local;const batch=await invoke<{paths:string[];errors:string[]}>('startup_pdfs');if(disposed)return;if(batch.errors.length)setError(batch.errors.join('\n'));if(batch.paths.length)await queueOpen(()=>handlers.current.openPaths(batch.paths));else if(prefsRef.current.restoreProgress){const recent=snapshot.book.recents.find(recent=>recent.path);if(recent){const path=await invoke<string>('reopen_pdf',{path:recent.path});await queueOpen(()=>handlers.current.openPaths([path]));}}}catch(error){if(!disposed)setError(String(error));}
+      try{const snapshot=await local;const restored=await restore;const batch=await invoke<{paths:string[];errors:string[]}>('startup_pdfs');if(disposed)return;if(batch.errors.length)setError(batch.errors.join('\n'));if(batch.paths.length)await queueOpen(()=>handlers.current.openPaths(batch.paths));else if(!restored&&prefsRef.current.restoreProgress){const recent=snapshot.book.recents.find(recent=>recent.path);if(recent){const path=await invoke<string>('reopen_pdf',{path:recent.path});await queueOpen(()=>handlers.current.openPaths([path]));}}}catch(error){if(!disposed)setError(String(error));}
     })().catch(error=>{if(!disposed)setError(String(error));});
     const key=(event:KeyboardEvent)=>{
       if (event.key === 'Escape') {
         dismissToolbarMenus();
         panes.current.get(activeRef.current)?.dismissLinkPreview();
       }
-      if(event.isComposing||event.keyCode===229||!(event.ctrlKey||event.metaKey))return;
+      if(event.isComposing||event.keyCode===229)return;
+      if (event.key === 'F6' && !modalRef.current && !exclusive.current) { event.preventDefault(); handlers.current.cycleColumns(event.shiftKey); return; }
+      if (!(event.ctrlKey||event.metaKey)) return;
       const value=event.key.toLowerCase();if(modalRef.current){if(value==='w'||value==='tab')event.preventDefault();return;}if(exclusive.current)return;
-      if(event.shiftKey&&event.key==='Enter'&&panes.current.has(activeRef.current)){event.preventDefault();event.stopImmediatePropagation();const id=activeRef.current;if(id){setReading(false);setFloating(false);setRight(true);setSignals(previous=>({...previous,[id]:(previous[id]||0)+1}));}}
+      if(event.shiftKey&&event.key==='Enter'&&panes.current.has(activeRef.current)){event.preventDefault();event.stopImmediatePropagation();handlers.current.requestTranslation(activeRef.current,false);}
       else if(value==='o'){event.preventDefault();void handlers.current.choose();}
-      else if(value==='s'){event.preventDefault();void runOperation('saving',()=>handlers.current.saveTab(activeRef.current, event.shiftKey));}
+      else if(value==='s'&&tabsRef.current.some(tab=>tab.id===activeRef.current)){event.preventDefault();void runOperation('saving',()=>handlers.current.saveTab(activeRef.current, event.shiftKey));}
       else if(value==='f'&&editors.current.has(activeRef.current)){event.preventDefault();editors.current.get(activeRef.current)?.find();}
       else if(value==='w'){event.preventDefault();if(activeRef.current)void handlers.current.closeTab(activeRef.current);}
       else if((value==='z'||value==='y')&&!event.altKey&&activeRef.current&&!(event.target instanceof Element&&event.target.closest('input,textarea,[contenteditable=true]'))){event.preventDefault();
         const command = value==='y'||event.shiftKey?'redo':'undo', editor = editors.current.get(activeRef.current);
         if (editor) editor[command]();
         else void action(command);}
-      else if(value==='tab'||/^[1-9]$/.test(value)){event.preventDefault();activate(shortcutTabId(tabsRef.current.map(tab=>tab.id),activeRef.current,value==='tab'?'Tab':value,event.shiftKey));}
+      else if(value==='tab'||/^[1-9]$/.test(value)){event.preventDefault();activate(shortcutTabId(columns.flatMap(column=>workspaceRef.current.order[column]),activeRef.current,value==='tab'?'Tab':value,event.shiftKey));}
     };
     const unload=(event:BeforeUnloadEvent)=>{if(tabsRef.current.some(tab => dirty(tab) || !!pendingNote(tab.id))){event.preventDefault();event.returnValue='';}};
     const dismiss=(event:PointerEvent)=>{if(!(event.target as Element).closest('.toolbar-menu'))dismissToolbarMenus();};
     window.addEventListener('keydown',key,true);window.addEventListener('beforeunload',unload);document.addEventListener('pointerdown',dismiss);
     return()=>{disposed=true;releases.forEach(release=>release());progressTimers.current.forEach(clearTimeout);window.removeEventListener('keydown',key,true);window.removeEventListener('beforeunload',unload);document.removeEventListener('pointerdown',dismiss);};
   },[]);
+  function resizeWorkspace(key: 'rightShare' | 'lowerShare', value: number) {
+    updateWorkspace({ ...workspaceRef.current, [key]: Math.max(0.15, Math.min(0.85, value)) });
+  }
+  function renderTabs(column: Column) {
+    const items = workspace.order[column].flatMap<HeaderTab>(id => {
+      const tab = tabs.find(item => item.id === id);
+      if (tab) return [{ ...tab, dirty: dirty(tab) || !!pendingNote(id) }];
+      const extra = extras.find(item => item.id === id);
+      return extra ? [{ ...extra, dirty: false }] : [];
+    });
+    return <WorkspaceTabs column={column} tabs={items} selected={workspace.selected[column]} busy={!!operation} maximized={maximized === column}
+      onSelect={id => activate(id)} onClose={id => { void closeTab(id); }} onMove={moveTab} onOpen={() => { void choose(column); }}
+      onNew={kind => { if (kind === 'chat' || kind === 'translation') addFeature(kind, column); else createText(kind, column); }}
+      onCollapse={openColumns.length > 1 && !maximized ? () => collapseColumn(column) : undefined}
+      onMaximize={() => { focusColumn(column); setMaximized(maximized === column ? null : column); }} onReset={resetWorkspace} />;
+  }
+  async function relocateWorkspace(resource: Resource) {
+    const column = columnOf(workspaceRef.current, resource.id);
+    if (!column) return;
+    await choose(column);
+    if (tabsRef.current.some(tab => tab.path && resource.path && tab.path.toLowerCase() === resource.path.toLowerCase())) await closeTab(resource.id);
+  }
+  function openConversation(conversation: Conversation) {
+    if (extrasRef.current.some(tab => tab.id === conversation.id)) { activate(conversation.id); return; }
+    updateExtras([...extrasRef.current, { id: conversation.id, kind: 'chat', name: conversationName(conversation) }]);
+    updateWorkspace(move(workspaceRef.current, conversation.id, workspaceRef.current.focus));
+  }
+  async function clearChatHistory(ids?: string[]) {
+    const targets = ids ?? extrasRef.current.filter(tab => tab.kind === 'chat' && !temporaryChats.current.has(tab.id)).map(tab => tab.id);
+    await Promise.all(targets.map(id => chatStops.current.get(id)?.()));
+    await repository.deleteConversations(ids);
+    setChatRevisions(previous => {
+      const next = { ...previous };
+      for (const id of targets) next[id] = (next[id] ?? 0) + 1;
+      return next;
+    });
+  }
+  async function makeMaterial(id: string, mode: 'selection' | 'page'): Promise<Material> {
+    const tab = tabsRef.current.find(item => item.id === id);
+    if (!tab) throw Error('请先打开材料所在的文档。');
+    if (tab.kind === 'pdf') {
+      const state = tab.state;
+      const pane = panes.current.get(id);
+      if (!state || !pane) throw Error('PDF 尚未准备好。');
+      const page = mode === 'page' ? state.page : state.selectionRects[0]?.page || state.page;
+      const text = mode === 'page' ? await pane.pageText(page) : state.selectionRaw || state.selection;
+      if (!text.trim()) throw Error('没有可用文字。扫描页可手动粘贴文字。');
+      const rectangle = mode === 'selection' ? state.selectionRects[0] : undefined;
+      return { id: crypto.randomUUID(), documentId: id, fingerprint: tab.fingerprint, name: tab.name, page, text,
+        position: rectangle ? { x: rectangle.x, y: rectangle.y } : undefined };
+    }
+    const selection = editors.current.get(id)?.selection();
+    if (!selection?.text.trim()) throw Error('请先在文档中选中文字。');
+    return { id: crypto.randomUUID(), documentId: id, name: tab.name, line: selection.line, text: selection.text };
+  }
+  async function attachMaterial(id: string, mode: 'selection' | 'page') {
+    try {
+      const material = await makeMaterial(id, mode);
+      const current = workspaceRef.current;
+      const target = extrasRef.current.find(item => item.kind === 'chat' && item.id === current.selected.right);
+      const chatId = target?.id ?? addFeature('chat', 'right');
+      activate(chatId);
+      setChatMaterials(previous => ({ ...previous, [chatId]: [...(previous[chatId] ?? []), material] }));
+    } catch (error) { setError(String(error)); }
+  }
+  async function locateMaterial(material: Material) {
+    const tab = tabsRef.current.find(item => item.kind === 'pdf' ? item.fingerprint === material.fingerprint : !material.fingerprint && item.id === material.documentId);
+    if (!tab) throw Error('请重新打开原文。已发送的片段仍在对话中。');
+    const sourceColumn = columnOf(workspaceRef.current, tab.id);
+    if (sourceColumn && sourceColumn === workspaceRef.current.focus) {
+      const target = columns.find(column => column !== sourceColumn && !workspaceRef.current.order[column].length);
+      if (target) moveTab(tab.id, target);
+    }
+    activate(tab.id);
+    if (tab.kind === 'pdf' && tab.state && material.page) await panes.current.get(tab.id)?.locateSource(material.page, material.position);
+    if (tab.kind !== 'pdf' && material.line) {
+      if (tab.mode === 'preview') patchText(tab.id, { mode: 'split' });
+      requestAnimationFrame(() => editors.current.get(tab.id)?.locate(material.line!, material.text));
+    }
+  }
+  const verticalSplit = showUpper && showLower;
+  const horizontalSplit = showRight && (showUpper || showLower);
+  const leftColumn = showUpper ? 'upper' : 'lower';
+  const gridLayout: CSSProperties = {
+    gridTemplateAreas: maximized ? `"${maximized}"` : verticalSplit ?
+      horizontalSplit ? '"upper divider-right right" "divider-lower divider-right right" "lower divider-right right"' : '"upper" "divider-lower" "lower"'
+      : horizontalSplit ? `"${leftColumn} divider-right right"` : `"${openColumns[0] ?? 'upper'}"`,
+    gridTemplateRows: verticalSplit ? `minmax(88px, ${1 - workspace.lowerShare}fr) 5px minmax(88px, ${workspace.lowerShare}fr)` : 'minmax(0, 1fr)',
+    gridTemplateColumns: horizontalSplit ? `minmax(135px, ${1 - workspace.rightShare}fr) 5px minmax(136px, ${workspace.rightShare}fr)` : 'minmax(0, 1fr)',
+  };
   return <div className={'app workspace'+(reading?' reading-mode':'')} onDragOver={event=>{if(event.dataTransfer.types.includes('Files')){if(!isTauri()) setDragging(true);event.preventDefault();}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setDragging(false);}} onDrop={event=>{const handled = event.defaultPrevented;event.preventDefault();setDragging(false);if(!handled&&!isTauri())void fileOpen([...event.dataTransfer.files]);}}
     onPaste={event => {
       if (event.defaultPrevented || modalRef.current || text?.kind !== 'markdown' || !isTauri()) return;
       const files = [...event.clipboardData.files].filter(isImage);
       if (files.length) { event.preventDefault(); void insertImages(text.id, files); }
     }}>
-    <div className="workspace-tabs"><div className="workspace-brand" data-tauri-drag-region><img src={brandIcon} width={24} height={24} alt="" /><strong>PDFreader</strong></div><div className="document-tabs" role="tablist" aria-label="文档标签">{tabs.map(tab=><div className={'document-tab'+(tab.id===activeId?' selected':'')} key={tab.id}><button id={'document-tab-'+tab.id} role="tab" aria-label={tab.name} aria-controls={'document-pane-'+tab.id} aria-selected={tab.id===activeId} tabIndex={tab.id===activeId?0:-1} title={tab.path||tab.name} onClick={()=>activate(tab.id)} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const ids=tabsRef.current.map(tab=>tab.id);const next=event.key==='Home'?ids[0]:event.key==='End'?ids[ids.length-1]:shortcutTabId(ids,tab.id,'Tab',event.key==='ArrowLeft');activate(next);document.getElementById('document-tab-'+next)?.focus();}}}>{tab.kind === 'pdf' ? <DocumentPdf20Regular /> : <DocumentText20Regular />}<span>{tab.name}</span>{(dirty(tab)||pendingNote(tab.id))&&<span className="dirty-dot" aria-label={tab.kind === 'pdf' ? '有未导出修改' : '有未保存修改'} />}</button><button className="close-document" aria-label={'关闭 '+tab.name} title={'关闭 '+tab.name} disabled={!!operation} onClick={()=>{void closeTab(tab.id);}}><Dismiss20Regular /></button></div>)}</div><details className="toolbar-menu new-document">
-      <summary role="button" aria-label="新建或打开文档" title="新建或打开文档"><Add20Regular /></summary>
-      <div className="command-menu" onClick={event => { if ((event.target as Element).closest('button')) event.currentTarget.parentElement?.removeAttribute('open'); }}>
-        <button disabled={!!operation} onClick={()=>{void choose();}}>打开文档</button>
-        <button disabled={!!operation} onClick={()=>createText('markdown')}>新建 Markdown</button>
-        <button disabled={!!operation} onClick={()=>createText('txt')}>新建 TXT</button>
-      </div>
-    </details><div className="workspace-drag" data-tauri-drag-region aria-hidden="true" />{isTauri()&&<WindowControls busy={!!operation||!localReady} onClose={()=>{void closeWindow();}} onError={setError} />}</div>
-    {text ? <TextToolbar tab={text} busy={!!operation} attachments={isTauri()} onOpen={()=>{void choose();}}
+    <div className="workspace-tabs"><div className="workspace-brand" data-tauri-drag-region><img src={brandIcon} width={24} height={24} alt="" /><strong>PDFreader</strong></div>
+      {renderTabs('upper')}
+      <div className="workspace-drag" data-tauri-drag-region aria-hidden="true" />
+      {(['lower', 'right'] as const).map(column => <button key={column} type="button" className="workspace-layout-toggle" aria-pressed={!workspace.collapsed[column]} onClick={() => {
+        if (workspaceRef.current.collapsed[column]) focusColumn(column);
+        else collapseColumn(column);
+      }}>{columnName[column]}</button>)}
+      {maximized && <button className="workspace-layout-toggle" onClick={() => setMaximized(null)}>恢复三栏布局</button>}
+      {isTauri()&&<WindowControls busy={!!operation||!layoutReady} onClose={()=>{void closeWindow();}} onError={setError} />}</div>
+    {feature ? <div className="document-toolbar"><button onClick={() => { void choose(); }}>打开文档</button>
+      <strong>{feature.name}</strong><button onClick={() => openSettings(feature.kind === 'chat' ? 'chat' : 'translation')}>设置</button></div>
+      : text ? <TextToolbar tab={text} busy={!!operation} attachments={isTauri()} onOpen={()=>{void choose();}}
       onSave={saveAs=>{void runOperation('saving',()=>saveTab(text.id,saveAs));}}
       onFind={()=>editors.current.get(text.id)?.find()} onUndo={()=>editors.current.get(text.id)?.undo()}
       onRedo={()=>editors.current.get(text.id)?.redo()} onWrap={()=>patchText(text.id,{wrap:!text.wrap})}
@@ -458,7 +698,7 @@ function App() {
     {textBoxStyle && <TextBoxToolbar key={activeId} value={textBoxStyle} busy={!!operation}
       onChange={change=>{void panes.current.get(activeId)?.updateTextBoxStyle(textBoxStyle.target,change).catch(error=>setError(String(error)));}}
       onDone={()=>{void action('finish-text-box');}} />}
-    <input ref={input} type="file" multiple accept={acceptDocuments} hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';if(files.length)void fileOpen(files);}} />
+    <input ref={input} type="file" multiple accept={acceptDocuments} hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';if(files.length)void fileOpen(files, pickerColumn.current);}} />
     {text?.kind === 'markdown' && isTauri() && <input ref={imageInput} type="file" multiple accept="image/*,.svg,.avif,.ico" hidden onChange={event=>{
       const files = [...(event.target.files ?? [])]; event.target.value = '';
       if (files.length) void insertImages(text.id, files);
@@ -472,16 +712,59 @@ function App() {
           onDraftValue={value=>updateDraft(activeId,value)}
           onNote={async (draftId,value)=>{try{await finishNote(activeId,draftId,value);}catch(error){setError(String(error));}}}
           onAction={(value,item,width)=>annotationAction(activeId,value,item,width)} /> : <LibraryPanel snapshot={library} reader={reader} onNavigate={index=>panes.current.get(activeId)?.navigate(index)} onRecent={recent=>{void openRecent(recent);}} onRelocate={recent=>{void relocate(recent);}} onNote={note=>{void locateNote(note);}} onError={setError} />}</div>}
-      <section className="reader" aria-label="文档内容">{tabs.map(tab=>tab.kind==='pdf' ? <DocumentPane key={tab.id} tab={tab} active={tab.id===activeId} linkPreviewActive={tab.id===activeId&&!modalRef.current&&!operation} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />
-        : <TextPane key={tab.id} tab={tab} active={tab.id===activeId} busy={!!operation} register={registerText} onEdit={editText}
-          onMode={(id,mode)=>patchText(id,{mode})} onImages={(id,files,position)=>{void insertImages(id,files,position);}}
-          onCopy={setNotice} onError={setError} />)}
-        {!tabs.length&&<div className="welcome"><DocumentPdf20Regular /><h1>打开文档</h1><p>选择或拖入 PDF、Markdown 和 TXT 文件。</p><button className="primary" disabled={!!operation} onClick={()=>{void choose();}}><FolderOpen20Regular />打开文档</button><span>Ctrl + O 打开 · Ctrl + Tab 切换标签</span><button onClick={()=>{void queueOpen(async()=>{const response=await fetch('/pdfjs/web/compressed.tracemonkey-pldi-09.pdf');if(!response.ok)throw Error('示例文件不可用');await openData(new Uint8Array(await response.arrayBuffer()),'示例论文.pdf');});}}>阅读示例论文</button></div>}
+      <section className="reader workspace-grid" data-split-lower={verticalSplit} aria-label="文档内容" style={gridLayout}>
+        {openColumns.map(column => <div key={column} className="workspace-column" data-column={column} data-focused={column === workspace.focus} style={{ gridArea: column }}
+          onPointerDownCapture={() => { if (workspaceRef.current.focus !== column) focusColumn(column); }}
+          onFocusCapture={() => { if (workspaceRef.current.focus !== column) focusColumn(column); }}>
+          {column !== 'upper' && renderTabs(column)}
+          {!workspace.selected[column] && (column === 'upper' ? <div className="welcome"><DocumentPdf20Regular /><h1>打开文档</h1><p>选择或拖入 PDF、Markdown 和 TXT 文件。</p><button className="primary" disabled={!!operation} onClick={()=>{void choose();}}><FolderOpen20Regular />打开文档</button><span>Ctrl + O 打开 · Ctrl + Tab 切换标签</span><button onClick={()=>{void queueOpen(async()=>{const response=await fetch('/pdfjs/web/compressed.tracemonkey-pldi-09.pdf');if(!response.ok)throw Error('示例文件不可用');await openData(new Uint8Array(await response.arrayBuffer()),'示例论文.pdf');});}}>阅读示例论文</button></div> : <p className="empty-column">用加号打开或新建标签。</p>)}
+        </div>)}
+        {horizontalSplit && !maximized && <WorkspaceSeparator vertical value={workspace.rightShare} onChange={value => resizeWorkspace('rightShare', value)} />}
+        {verticalSplit && !maximized && <WorkspaceSeparator value={workspace.lowerShare} onChange={value => resizeWorkspace('lowerShare', value)} />}
+        {tabs.map(tab => {
+          const column = columnOf(workspace, tab.id);
+          const visible = !!column && openColumns.includes(column) && workspace.selected[column] === tab.id;
+          return <div className="workspace-slot" key={tab.id} data-column={column} style={{ gridArea: column }} hidden={!visible}
+            onPointerDownCapture={() => { if (column && workspaceRef.current.focus !== column) focusColumn(column); }}
+            onFocusCapture={() => { if (column && workspaceRef.current.focus !== column) focusColumn(column); }}>
+            {tab.kind==='pdf' ? <DocumentPane tab={tab} active={visible} linkPreviewActive={visible&&!modalRef.current&&!operation} theme={colorScheme} accent={accent} selectionToolbar={preferences.selectionPopup} register={register} onEvent={readerEvent} onOpened={opened} />
+              : <TextPane tab={tab} active={visible} busy={!!operation} register={registerText} onEdit={editText}
+                onMode={(id,mode)=>patchText(id,{mode})} onImages={(id,files,position)=>{void insertImages(id,files,position);}}
+                onCopy={setNotice} onError={setError} />}
+          </div>;
+        })}
+        {extras.map(tab => {
+          const column = columnOf(workspace, tab.id);
+          const visible = !!column && openColumns.includes(column) && workspace.selected[column] === tab.id;
+          return <div className="workspace-slot" key={tab.id} data-column={column} style={{ gridArea: column }} hidden={!visible}
+            onPointerDownCapture={() => { if (column && workspaceRef.current.focus !== column) focusColumn(column); }}
+            onFocusCapture={() => { if (column && workspaceRef.current.focus !== column) focusColumn(column); }}>
+            <div id={'document-pane-' + tab.id} role="tabpanel" aria-labelledby={'document-tab-' + tab.id} className="workspace-feature">
+              {tab.kind === 'translation' ? <WorkspaceTranslation source={tab.source} onSource={source => updateExtras(extrasRef.current.map(item => item.id === tab.id ? { ...item, source } : item))}
+                selected={workspace.selected} pdfs={tabs.filter((item): item is PdfTab => item.kind === 'pdf')} visible={visible}
+                focusedPdf={active?.kind === 'pdf' ? active.id : ''} automatic={automatic && extras.find(item => item.kind === 'translation' &&
+                  (item.source === activeId || (item.source ?? 'upper') === workspace.focus))?.id === tab.id}
+                signal={translationSignals[tab.id]} showMetadata={preferences.showMetadata} showOriginal={preferences.showOriginal}
+                onSettings={() => openSettings('translation')} disabled={!localReady || !!operation || settingsOpen} />
+              : tab.kind === 'chat' ? <ChatPane id={tab.id} incoming={chatMaterials[tab.id]} onReceive={() => setChatMaterials(previous => {
+                const next = { ...previous }; delete next[tab.id]; return next;
+              })} onTemporary={temporary => {
+                if (temporary) temporaryChats.current.add(tab.id); else temporaryChats.current.delete(tab.id);
+                updateExtras([...extrasRef.current]);
+              }} documents={tabs.map(item => ({ id: item.id, name: item.name, kind: item.kind }))}
+                getMaterial={makeMaterial} onLocate={locateMaterial} onOpenHistory={openConversation} onDeleteHistory={id => clearChatHistory([id])}
+                clearRevision={chatRevisions[tab.id] ?? 0} stopRegistration={(id, stop) => {
+                  if (stop) chatStops.current.set(id, stop); else chatStops.current.delete(id);
+                }} />
+              : <div className="document-error" role="alert"><h2>文档无法恢复</h2><p>{missing[tab.id]}</p><button onClick={() => { void relocateWorkspace(tab); }}>重新定位</button></div>}
+            </div>
+          </div>;
+        })}
       </section>
-      <div id="translation-panel" className={'panel-shell translation-shell'+(floating?' floating-translation':'')} hidden={!right||reading||!reader} style={{width:floating?Math.min(480,viewport-32):widths.right}}>{!floating&&<ResizeHandle side="right" width={widths.right} max={widths.rightMax} onResize={value=>resizePanel('right',value)} />}{tabs.filter((tab): tab is PdfTab => tab.kind==='pdf').map(tab=><div className="tab-translation" key={tab.id} hidden={tab.id!==activeId} style={{'--translation-font-size': preferences.translationFontSize+'px'} as CSSProperties}><TranslationPanel reader={tab.state} documentKey={tab.fingerprint} documentName={tab.name} active={tab.id===activeId&&!settingsOpen} automatic={automatic} showMetadata={preferences.showMetadata} showOriginal={preferences.showOriginal} translateSignal={signals[tab.id]||0} floating={floating} onPin={()=>{setFloating(false);setRight(true);}} onClose={()=>setRight(false)} visible={tab.id===activeId&&right&&!reading} settingsOpen={false} onSettings={()=>openSettings('translation')} disabled={!!operation||!localReady||settingsOpen} onComment={()=>{}} /></div>)}{!tabs.length&&right&&!reading&&<aside className="translation"><div className="panel-heading"><h2>译文</h2><button aria-label="关闭翻译" onClick={()=>setRight(false)}><Dismiss20Regular /></button></div><p className="hint">打开 PDF 后选择文字翻译。</p></aside>}</div>
+      <div id="translation-panel" className={'panel-shell translation-shell'+(floating?' floating-translation':'')} hidden={!right||reading||!reader} style={{width:floating?Math.min(480,viewport-32):widths.right}}>{!floating&&<ResizeHandle side="right" width={widths.right} max={widths.rightMax} onResize={value=>resizePanel('right',value)} />}{tabs.filter((tab): tab is PdfTab => tab.kind==='pdf').map(tab=><div className="tab-translation" key={tab.id} hidden={tab.id!==activeId} style={{'--translation-font-size': preferences.translationFontSize+'px'} as CSSProperties}><TranslationPanel reader={tab.state} documentKey={tab.fingerprint} documentName={tab.name} active={tab.id===activeId&&!settingsOpen} automatic={automatic&&!extras.some(item=>item.kind==='translation'&&(item.source===tab.id||(item.source??'upper')===workspace.focus))} showMetadata={preferences.showMetadata} showOriginal={preferences.showOriginal} translateSignal={signals[tab.id]||0} floating={floating} onPin={()=>{setFloating(false);setRight(true);}} onClose={()=>setRight(false)} visible={tab.id===activeId&&right&&!reading} settingsOpen={false} onSettings={()=>openSettings('translation')} disabled={!!operation||!localReady||settingsOpen} onComment={()=>{}} /></div>)}{!tabs.length&&right&&!reading&&<aside className="translation"><div className="panel-heading"><h2>译文</h2><button aria-label="关闭翻译" onClick={()=>setRight(false)}><Dismiss20Regular /></button></div><p className="hint">打开 PDF 后选择文字翻译。</p></aside>}</div>
     </main>
     <footer><span>{tabs.length?`${tabs.length} 个文档`:'就绪'}{reader&&(reader.dirty||pendingNote(activeId))?' · 有未导出批注':text&&textDirty(text)?' · 有未保存修改':''}</span><span>{reader?`第 ${reader.page} / ${reader.pages} 页`:text?`第 ${text.position.line} 行，第 ${text.position.column} 列 · ${text.encoding}${text.bom?' BOM':''} · ${text.eol==='\r\n'?'CRLF':text.eol==='\r'?'CR':'LF'}`:active?.name||'PDFreader'}</span></footer>
-    <SettingsDialog open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.kind==='pdf'?active.fingerprint:''} />
+    <SettingsDialog onClearChat={() => { void clearChatHistory().catch(error => setError(String(error))); }} open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.kind==='pdf'?active.fingerprint:''} />
     {citationTab && citationAdapter && <CitationDialog key={citationTab.id} documentName={citationTab.name} adapter={citationAdapter} onClose={() => setCitationId('')} />}
     {encodingFile && <EncodingDialog name={encodingFile} error={encodingError} onAnswer={answerEncoding} />}
     <dialog ref={dialog} className="unsaved-dialog" aria-labelledby="unsaved-title" onCancel={event=>{event.preventDefault();answer('cancel');}}><h2 id="unsaved-title">{text ? '有尚未保存的修改' : '有尚未导出的修改'}</h2>

@@ -1,6 +1,6 @@
 const actions = [
   ['copy', '复制'], ['highlight', '高亮'], ['underline', '下划线'],
-  ['strikeout', '删除线'], ['comment', '写注释'], ['translate', '翻译'], ['citation', '引文'],
+  ['strikeout', '删除线'], ['comment', '写注释'], ['translate', '翻译'], ['ask', '问 AI'], ['citation', '引文'],
 ];
 
 export function hasTextSelection(selection, viewer) {
