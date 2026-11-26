@@ -80,3 +80,17 @@ export function saveWorkspace(workspace: Workspace, resources: Resource[]): Save
   for (const column of columns) for (const id of workspace.order[column]) if (!ids.has(id)) next = remove(next, id);
   return { ...next, version: 1, resources };
 }
+
+export function singleTranslation(workspace: SavedWorkspace): SavedWorkspace {
+  const translations = workspace.resources.filter(tab => tab.kind === 'translation');
+  if (translations.length < 2) return workspace;
+  const keep = translations.find(tab => tab.id === workspace.selected[workspace.focus])
+    ?? translations.find(tab => columns.some(column => !workspace.collapsed[column] && workspace.selected[column] === tab.id))
+    ?? translations[0];
+  const duplicates = translations.filter(tab => tab.id !== keep.id);
+  return {
+    ...duplicates.reduce((layout, tab) => remove(layout, tab.id), workspace as Workspace),
+    version: 1,
+    resources: workspace.resources.filter(tab => tab.kind !== 'translation' || tab.id === keep.id),
+  };
+}

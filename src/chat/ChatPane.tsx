@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import { Add16Regular, ChevronDown16Regular, ChevronLeft16Regular, Dismiss16Regular, History16Regular } from '@fluentui/react-icons';
 import { repository } from '../local/repository';
 import { MarkdownRenderer } from '../translation/MarkdownRenderer';
 import { CHAT_PREFERENCES_CHANGED } from './ChatSettings';
-import { chatMessages, conversationName, defaultChat, materialMarker, providerName, type Conversation, type Material, type Provider, type Turn } from './model';
+import {
+  activeAccount, CHATGPT_SESSION_CHANGED, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel, type ChatGptCatalog,
+} from './chatgpt';
+import { chatMessages, conversationName, defaultChat, materialMarker, providerName, providers, type ChatCommand, type Conversation, type Material, type MaterialMode, type Provider, type Turn } from './model';
 import './chat.css';
 
 export type { Material } from './model';
@@ -21,18 +25,30 @@ function markdownExport(turns: Turn[]) {
   }).join('\n\n---\n\n');
 }
 
-export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getMaterial, onLocate, onOpenHistory, onDeleteHistory, clearRevision, stopRegistration }: {
-  id: string; incoming?: Material[]; onReceive: () => void; onTemporary: (temporary: boolean) => void;
-  documents: DocumentChoice[]; getMaterial: (id: string, mode: 'selection' | 'page') => Promise<Material>;
+export function ChatPane({ id, visible, incoming, onReceive, onTemporary, documents, getMaterial, onLocate, onOpenHistory, onDeleteHistory, onNew, onSettings, clearRevision, stopRegistration }: {
+  id: string; visible: boolean; incoming?: Material[]; onReceive: () => void; onTemporary: (temporary: boolean) => void;
+  documents: DocumentChoice[]; getMaterial: (id: string, mode: MaterialMode) => Promise<Material>;
   onLocate: (material: Material) => Promise<void>; onOpenHistory: (conversation: Conversation) => void;
   onDeleteHistory: (id: string) => Promise<void>; clearRevision: number; stopRegistration: (id: string, stop: (() => Promise<void>) | null) => void;
+  onNew: () => void; onSettings: (provider: Provider) => void;
 }) {
   const [preferences, setPreferences] = useState(defaultChat().preferences);
   const [provider, setProvider] = useState<Provider>('openai');
   const [model, setModel] = useState(preferences.models.openai);
+  const [catalog, setCatalog] = useState<ChatGptCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState('');
   const [draft, setDraft] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [source, setSource] = useState('');
+  const [picker, setPicker] = useState<'materials' | 'commands' | 'model' | null>(null);
+  const [source, setSource] = useState<DocumentChoice | null>(null);
+  const [query, setQuery] = useState('');
+  const [command, setCommand] = useState<ChatCommand | null>(null);
+  const [adding, setAdding] = useState(false);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const choices = useRef<HTMLDivElement>(null);
+  const chosenModel = useRef(false);
+  const log = useRef<HTMLDivElement>(null);
+  const followReply = useRef(true);
   const [turns, setTurns] = useState<Turn[]>([]);
   const turnsRef = useRef<Turn[]>([]);
   const pending = useRef('');
@@ -44,8 +60,12 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
   const [showHistory, setShowHistory] = useState(false);
   const [ready, setReady] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const requestedSource = documents.find(tab => tab.id === source) ?? documents[0];
   const busy = turns.at(-1)?.state === 'streaming';
+  const canSend = !!(draft.trim() || command);
+  const selectedGpt = provider === 'chatgpt' ? selectChatGptModel(catalog, model) : undefined;
+  const displayedModel = provider === 'chatgpt' ? selectedGpt?.name : model;
+  const matchingDocuments = documents.filter(document => document.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const matchingCommands = preferences.commands.filter(item => item.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const references = new Map(turns.flatMap(turn => turn.materials).map(material => [materialMarker(material), material]));
   function citedMaterials(text: string) {
     const markers = new Set([...text.matchAll(/\[\[(M[a-f0-9]{32})\]\]/g)].map(match => match[1]));
@@ -67,6 +87,9 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
     await Promise.all([invoke('api_cancel', { requestId }).catch(() => {}), persist(next)]);
   }
   const stop = useRef(cancel); stop.current = cancel;
+  useLayoutEffect(() => {
+    if (followReply.current && log.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [turns]);
   useEffect(() => {
     alive.current = true;
     stopRegistration(id, () => stop.current());
@@ -79,7 +102,14 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
       setPreferences(data.preferences); setProvider(defaultProvider);
       setModel(restored.at(-1)?.model || data.preferences.models[defaultProvider]);
     }).catch(error => setMessage(String(error))).finally(() => { if (alive.current) setReady(true); });
-    const refresh = () => { void repository.chat().then(data => setPreferences(data.preferences)).catch(() => {}); };
+    const refresh = () => { void repository.chat().then(({ preferences }) => {
+      if (!alive.current) return;
+      setPreferences(preferences);
+      if (!turnsRef.current.length && !chosenModel.current) {
+        setProvider(preferences.provider);
+        setModel(preferences.models[preferences.provider]);
+      }
+    }).catch(() => {}); };
     window.addEventListener(CHAT_PREFERENCES_CHANGED, refresh);
     return () => {
       alive.current = false;
@@ -89,9 +119,36 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
     };
   }, [id]);
   useEffect(() => {
+    if (provider !== 'chatgpt' || !visible || !isTauri()) return;
+    let current = true;
+    let generation = 0;
+    const read = async () => {
+      const request = ++generation;
+      setCatalog(null);
+      setCatalogError('');
+      try {
+        const account = activeAccount(await readChatGptStatus());
+        if (!current || generation !== request) return;
+        if (!account?.connected) throw Error('请在 AI 对话设置中登录 ChatGPT。');
+        if (!account.planEnabled) throw Error('请授权使用 ChatGPT 订阅。');
+        const result = await readChatGptModels(account.id);
+        if (current && generation === request && result.accountId === account.id) {
+          setCatalog(result);
+          if (!result.models.length) setCatalogError('当前账户没有可用的 ChatGPT 模型。');
+        }
+      } catch (error) {
+        if (current && generation === request) setCatalogError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    void read();
+    const refresh = () => { void read(); };
+    window.addEventListener(CHATGPT_SESSION_CHANGED, refresh);
+    return () => { current = false; window.removeEventListener(CHATGPT_SESSION_CHANGED, refresh); };
+  }, [provider, visible]);
+  useEffect(() => {
     if (clearedAt.current === clearRevision) return;
     clearedAt.current = clearRevision;
-    update([]); setHistory([]); setMaterials([]); setDraft('');
+    update([]); setHistory([]); setMaterials([]); setDraft(''); setCommand(null); setPicker(null);
   }, [clearRevision]);
   useEffect(() => {
     if (!incoming?.length) return;
@@ -113,6 +170,7 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
     if (!turn.model.trim()) { setMessage('请填写模型名称。'); return; }
     const requestId = crypto.randomUUID();
     const next = [...previous, turn];
+    followReply.current = true;
     pending.current = requestId;
     update(next);
     await persist(next);
@@ -124,7 +182,11 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
       update(turnsRef.current.map(item => item.id === turn.id ? { ...item, text: item.text + chunk.text } : item));
     });
     try {
-      const result = await invoke<Result>('chat_request', { request: { requestId, sessionId: id, provider: turn.provider, model: turn.model, prompt: preferences.prompt, messages }, onChunk });
+      const result = await invoke<Result>('chat_request', { request: {
+        requestId, sessionId: id, provider: turn.provider, model: turn.model, prompt: preferences.prompt, messages,
+        ollamaPort: turn.provider === 'ollama' ? turn.ollamaPort ?? preferences.ollamaPort : undefined,
+        chatgptAccount: turn.provider === 'chatgpt' ? turn.chatgptAccount : undefined,
+      }, onChunk });
       if (pending.current !== requestId) return;
       update(turnsRef.current.map(item => item.id === turn.id ? { ...item, ...result, usage: result.usage ?? undefined, state: 'complete' } : item));
     } catch (error) {
@@ -139,17 +201,49 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
   }
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft.trim() || pending.current) return;
-    void run({ id: crypto.randomUUID(), prompt: draft.trim(), materials: [...materials], provider, model, text: '', state: 'streaming' }, turnsRef.current);
-    if (pending.current) { setDraft(''); setMaterials([]); }
+    if (!canSend || pending.current || adding) return;
+    if (provider === 'chatgpt' && (!selectedGpt || !catalog)) {
+      setMessage(catalogError || '正在读取 ChatGPT 模型，请稍候。'); return;
+    }
+    if (provider === 'chatgpt' && turnsRef.current.some(turn => turn.chatgptAccount && turn.chatgptAccount !== catalog?.accountId)) {
+      setMessage('此对话包含另一 ChatGPT 账户的历史。请新建对话，或切回原账户。'); return;
+    }
+    void run({ id: crypto.randomUUID(), prompt: draft.trim() || command!.name, instruction: command?.instruction,
+      materials: [...materials], provider, model: selectedGpt?.slug ?? model.trim(), text: '', state: 'streaming',
+      chatgptAccount: provider === 'chatgpt' ? catalog?.accountId : undefined,
+      ollamaPort: provider === 'ollama' ? preferences.ollamaPort : undefined }, turnsRef.current);
+    if (pending.current) { setDraft(''); setMaterials([]); setCommand(null); setPicker(null); }
   }
-  async function add(mode: 'selection' | 'page') {
-    if (!requestedSource) return;
+  function editDraft(value: string) {
+    setDraft(value);
+    const mention = value.match(/(?:^|\s)@([^\s@]*)$/u);
+    const slash = !command && value.match(/^\/([^\s/]*)$/u);
+    setSource(null);
+    setQuery(mention?.[1] ?? (slash ? slash[1] : ''));
+    setPicker(mention ? 'materials' : slash ? 'commands' : null);
+  }
+  function togglePicker(next: typeof picker) {
+    setSource(null); setQuery(''); setPicker(picker === next ? null : next);
+  }
+  function chooseCommand(next: ChatCommand) {
+    setCommand(next); setPicker(null); setDraft(value => value.replace(/^\/[^\s/]*$/u, ''));
+    textarea.current?.focus();
+  }
+  async function add(document: DocumentChoice, mode: MaterialMode) {
+    const revision = clearedAt.current;
+    setAdding(true);
     try {
-      const material = await getMaterial(requestedSource.id, mode);
-      setMaterials(previous => [...previous, material]);
+      const material = await getMaterial(document.id, mode);
+      if (!alive.current || clearedAt.current !== revision) return;
+      if (new TextEncoder().encode(material.text).length > materialLimit) throw Error('资料太长，请缩小选区后再添加。');
+      setMaterials(previous => previous.some(item => item.documentId === material.documentId && item.page === material.page &&
+        item.line === material.line && item.text === material.text) ? previous : [...previous, material]);
+      setDraft(value => value.replace(/(^|\s)@[^\s@]*$/u, '$1'));
+      setPicker(null); setSource(null);
       setMessage('');
-    } catch (error) { setMessage(String(error)); }
+      textarea.current?.focus();
+    } catch (error) { if (alive.current && clearedAt.current === revision) setMessage(String(error)); }
+    finally { if (alive.current) setAdding(false); }
   }
   async function toggleTemporary(value: boolean) {
     setClearing(true);
@@ -177,15 +271,10 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
     } catch (error) { setMessage(String(error)); }
   }
   return <div className="chat-pane">
-    <div className="workspace-feature-header">
-      <label>服务 <select value={provider} onChange={event => {
-        const next = event.target.value as Provider;
-        setProvider(next); setModel(preferences.models[next]);
-      }}>{Object.entries(providerName).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
-      <label>模型 <input aria-label="对话模型" value={model} maxLength={80} onChange={event => setModel(event.target.value)} /></label>
-      <button onClick={() => { void list(); }}>对话历史</button>
-      <button disabled={!turns.length} onClick={() => { void exportMarkdown(); }}>导出 Markdown</button>
+    <div className="chat-header">
+      <button aria-expanded={showHistory} onClick={() => { void list(); }}><History16Regular />对话历史</button>
       <label><input type="checkbox" checked={temporary} disabled={busy || clearing || !ready} onChange={event => { void toggleTemporary(event.target.checked); }} />临时会话</label>
+      <button className="chat-new" onClick={onNew}><Add16Regular />新对话</button>
     </div>
     {showHistory && <ul className="chat-history">
       {history.length ? history.map(conversation => <li key={conversation.id}>
@@ -198,42 +287,100 @@ export function ChatPane({ id, incoming, onReceive, onTemporary, documents, getM
         }}>删除 {conversationName(conversation)}</button>
       </li>) : <li>暂无对话历史</li>}
     </ul>}
-    <div className="chat-messages" role="log" aria-label="对话消息" aria-live={busy ? 'off' : 'polite'}>
-      {turns.map((turn, index) => <article className="chat-turn" key={turn.id}>
-        <p className="chat-question">{turn.prompt}</p>
-        {turn.materials.map(item => <details key={item.id}><summary>{item.name}</summary><p className="selection">{item.text}</p></details>)}
-        <div className="chat-model">{providerName[turn.provider]} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
-        {turn.text && <MarkdownRenderer source={turn.text} />}
-        {citedMaterials(turn.text).map(item => <button key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
-        {turn.usage && <p className="chat-model">输入 {turn.usage.input_tokens ?? '—'} · 输出 {turn.usage.output_tokens ?? '—'} tokens</p>}
-        {turn.error && <p role="alert">{turn.error}</p>}
-        {turn.text && <button onClick={() => { void navigator.clipboard.writeText(turn.text).catch(error => setMessage(String(error))); }}>复制回复</button>}
-        {index === turns.length - 1 && ['failed', 'stopped'].includes(turn.state) && <button onClick={() => {
-          void run({ ...turn, id: crypto.randomUUID(), text: '', error: undefined, usage: undefined, state: 'streaming' }, turnsRef.current.slice(0, -1));
-        }}>重试</button>}
-      </article>)}
+    <div className="chat-messages" ref={log} role="log" aria-label="对话消息" aria-live={busy ? 'off' : 'polite'}
+      onScroll={event => {
+        const element = event.currentTarget;
+        followReply.current = element.scrollHeight - element.scrollTop - element.clientHeight < 28;
+      }}>
+      {ready && !turns.length && <p className="chat-empty">输入 @ 添加打开的文档，输入 / 使用快捷命令。</p>}
+      {turns.map((turn, index) => {
+        const cited = citedMaterials(turn.text);
+        return <article className="chat-turn" key={turn.id}>
+          <p className="chat-question">{turn.prompt}</p>
+          {turn.materials.map(item => <details key={item.id}><summary>{item.name}</summary><p className="selection">{item.text}</p></details>)}
+          <div className="chat-model">{providerName[turn.provider]} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
+          {turn.text && <MarkdownRenderer source={turn.text} pending={turn.state === 'streaming'} referenceMarkers={cited.map(materialMarker).join(' ')} />}
+          {cited.map((item, position) => <button className="chat-citation" key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>
+            <span aria-hidden="true">[{position + 1}]</span> 定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
+          {turn.usage && <p className="chat-model">输入 {turn.usage.input_tokens ?? '—'} · 输出 {turn.usage.output_tokens ?? '—'} tokens</p>}
+          {turn.error && <p role="alert">{turn.error}</p>}
+          {turn.text && <button onClick={() => { void navigator.clipboard.writeText(turn.text).catch(error => setMessage(String(error))); }}>复制回复</button>}
+          {index === turns.length - 1 && ['failed', 'stopped'].includes(turn.state) && <button onClick={() => {
+            void run({ ...turn, id: crypto.randomUUID(), text: '', error: undefined, usage: undefined, state: 'streaming' }, turnsRef.current.slice(0, -1));
+          }}>重试</button>}
+        </article>;
+      })}
     </div>
-    <form className="chat-form" onSubmit={submit}>
-      <div className="workspace-feature-header">
-        <label>材料来源 <select value={requestedSource?.id ?? ''} onChange={event => setSource(event.target.value)}>
-          {!documents.length && <option value="">暂无打开的文档</option>}
-          {documents.map(tab => <option key={tab.id} value={tab.id}>{tab.name}</option>)}
-        </select></label>
-        <button type="button" disabled={!requestedSource} onClick={() => { void add('selection'); }}>加入选区</button>
-        <button type="button" disabled={requestedSource?.kind !== 'pdf'} onClick={() => { void add('page'); }}>加入当前页</button>
-      </div>
+    <form className="chat-form" onSubmit={submit} onKeyDown={event => {
+      if (event.key === 'Escape' && picker && !event.nativeEvent.isComposing) {
+        event.preventDefault(); event.stopPropagation(); setPicker(null); textarea.current?.focus();
+      }
+    }}>
+      {picker && <div className="chat-picker" ref={choices} role="group" aria-label={{ materials: '资料选择', commands: '可用快捷命令', model: '模型选择' }[picker]}>
+        {picker === 'materials' && (source ? <>
+          <button type="button" className="chat-picker-back" onClick={() => setSource(null)} title={source.name}><ChevronLeft16Regular />{source.name}</button>
+          <button type="button" disabled={adding} onClick={() => { void add(source, 'selection'); }}>加入选区</button>
+          {source.kind === 'pdf'
+            ? <button type="button" disabled={adding} onClick={() => { void add(source, 'page'); }}>加入当前页</button>
+            : <button type="button" disabled={adding} onClick={() => { void add(source, 'document'); }}>加入全文</button>}
+        </> : matchingDocuments.length ? matchingDocuments.map(item => <button type="button" key={item.id} onClick={() => {
+          setSource(item); textarea.current?.focus();
+        }} title={item.name}>{item.name}</button>) : <p>{documents.length ? '没有匹配的文档' : '请先打开文档'}</p>)}
+        {picker === 'commands' && (matchingCommands.length ? matchingCommands.map(item =>
+          <button type="button" key={item.name} onClick={() => chooseCommand(item)} title={item.instruction}>/{item.name}</button>)
+          : <p>没有匹配的快捷命令</p>)}
+        {picker === 'model' && <>
+          <label className="field">模型服务<select aria-label="模型服务" value={provider} onChange={event => {
+            const next = event.target.value as Provider;
+            chosenModel.current = true; setProvider(next); setModel(preferences.models[next]);
+          }}>{providers.map(id => <option key={id} value={id}>{providerName[id]}</option>)}</select></label>
+          {provider === 'chatgpt' ? <label className="field">对话模型<select aria-label="对话模型" disabled={!selectedGpt}
+            value={selectedGpt?.slug ?? ''} onChange={event => { chosenModel.current = true; setModel(event.target.value); }}>
+            {!selectedGpt && <option value="">{catalogError ? '暂无可用模型' : '正在读取模型…'}</option>}
+            {catalog?.models.map(item => <option key={item.slug} value={item.slug}>{item.name}</option>)}
+          </select></label> : <label className="field">对话模型<input value={model} maxLength={80} onChange={event => {
+            chosenModel.current = true; setModel(event.target.value);
+          }} /></label>}
+          <button type="button" onClick={() => { setPicker(null); onSettings(provider); }}>配置模型服务</button>
+        </>}
+      </div>}
+      {message && <p className="chat-notice" role="status">{message}</p>}
+      {provider === 'chatgpt' && catalogError && !message && <p className="chat-notice" role="status">{catalogError}</p>}
       {!!materials.length && <ul className="chat-materials">{materials.map(item => <li key={item.id}><details><summary>
         {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}
-      </summary><p className="selection">{item.text}</p></details><button type="button" onClick={() => setMaterials(previous => previous.filter(material => material.id !== item.id))}>移除</button></li>)}</ul>}
-      {message && <p role="status">{message}</p>}
-      <label className="field">发往 {providerName[provider]}<textarea aria-label="对话输入" value={draft} rows={3} maxLength={12000} onChange={event => setDraft(event.target.value)}
+      </summary><p className="selection">{item.text}</p></details><button type="button" aria-label={`移除资料 ${item.name}`} title="移除资料"
+        onClick={() => setMaterials(previous => previous.filter(material => material.id !== item.id))}><Dismiss16Regular /></button></li>)}</ul>}
+      {command && <button type="button" className="chat-command-chip" title="移除快捷命令" onClick={() => setCommand(null)}>/{command.name}<Dismiss16Regular /></button>}
+      <textarea ref={textarea} aria-label="对话输入" placeholder="输入消息…" value={draft} rows={3} maxLength={12000} onChange={event => editDraft(event.target.value)}
         onKeyDown={event => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if ((picker === 'materials' || picker === 'commands') && (event.key === 'ArrowDown' || (event.key === 'Enter' && !event.shiftKey))) {
+            const first = choices.current?.querySelector<HTMLButtonElement>(source ? 'button:enabled:not(.chat-picker-back)' : 'button:enabled');
+            if (first) {
+              event.preventDefault();
+              if (event.key === 'Enter') first.click(); else first.focus();
+              return;
+            }
+          }
+          if (event.key === 'Enter' && !event.shiftKey && (preferences.sendShortcut === 'enter' || event.ctrlKey || event.metaKey)) {
             event.preventDefault(); event.currentTarget.form?.requestSubmit();
           }
-        }} /></label>
-      {busy ? <button type="button" onClick={() => { void cancel(); }}>停止生成</button>
-        : <button type="submit" className="primary" disabled={!ready || clearing || !draft.trim()}>发送</button>}
+        }} />
+      <div className="chat-composer-actions">
+        <button type="button" aria-label="添加资料" title="添加资料（@）" aria-expanded={picker === 'materials'} onClick={() => togglePicker('materials')}><Add16Regular /></button>
+        <button type="button" aria-label="快捷命令" title="快捷命令（/）" aria-expanded={picker === 'commands'} onClick={() => togglePicker('commands')}>/</button>
+        <button type="button" className="chat-model-select" aria-label="选择模型" aria-expanded={picker === 'model'} title={`${providerName[provider]} · ${displayedModel ?? ''}`}
+          onClick={() => togglePicker('model')}><span>{displayedModel || '选择模型'}</span><ChevronDown16Regular /></button>
+        {turns.length > 0 && <button type="button" className="chat-export" onClick={() => { void exportMarkdown(); }}>导出 Markdown</button>}
+        {busy ? <button className="chat-send" type="button" onClick={() => { void cancel(); }}>停止生成</button>
+          : <button type="submit" className="chat-send primary" title={preferences.sendShortcut === 'enter' ? 'Enter 发送' : 'Ctrl + Enter 发送'}
+            disabled={!ready || clearing || adding || !canSend || (provider === 'chatgpt' && !selectedGpt)}>发送</button>}
+      </div>
+      {provider === 'chatgpt' && <div className="chatgpt-plan">
+        <span>{selectedGpt ? '正在使用 ChatGPT 订阅' : 'ChatGPT 订阅'}</span>
+        {selectedGpt ? <button type="button" onClick={() => { void openChatGptUsage().catch(error => setMessage(String(error))); }}>管理 ChatGPT 用量</button>
+          : <button type="button" onClick={() => onSettings(provider)}>打开对话设置</button>}
+      </div>}
     </form>
   </div>;
 }

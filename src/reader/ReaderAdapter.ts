@@ -125,7 +125,11 @@ export class ReaderAdapter {
   dismissLinkPreview() { this.send('dismiss-link-preview'); }
   navigate(index: number) { this.send('outline', { index }); }
   restore(page: number, zoom = 'auto') { return this.request<ReaderState>('restore', { page, zoom }); }
-  setTheme(theme: ColorScheme, accent: Accent) { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'theme', theme, accent }, location.origin); }); }
+  setAppearance(theme: ColorScheme, accent: Accent, uiFontSize: number) {
+    void this.ready.then(() => {
+      if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'theme', theme, accent, uiFontSize }, location.origin);
+    });
+  }
   setSelectionToolbar(enabled: boolean) { void this.ready.then(() => { if (!this.disposed) this.frame.contentWindow?.postMessage({ channel: 'pdfreader', type: 'selection-toolbar', enabled }, location.origin); }); }
   setLinkPreviewActive(enabled: boolean) {
     void this.ready.then(() => { if (!this.disposed) this.send('link-preview-active', { enabled }); });

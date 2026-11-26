@@ -25,6 +25,7 @@ try {
       [textPath]: { name: 'notes.txt', path: textPath, revision: '1', encoding: 'UTF-8', bom: true, content: 'original\r\nsecond', assetsDir: 'notes.assets' },
     };
     window.qa = { open: [pdfPath], requests: [], cancels: [], writes: [], translations: [] };
+    window.qa.chatgpt = { activeId: null, accounts: [], signingIn: false };
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' } },
@@ -64,6 +65,26 @@ try {
             send({ index: 0, message: { ...identity, seq: 1, content: 'Translating source', reasoning: '' } });
           });
           case 'api_cancel': window.qa.cancels.push(args.requestId); return;
+          case 'chat_secret_status': return { mode: 'missing', available: false };
+          case 'chat_ollama_models': return args.port === 11435 ? ['qwen3:4b'] : [];
+          case 'chatgpt_status': return structuredClone(window.qa.chatgpt);
+          case 'chatgpt_sign_in': {
+            const id = args.accountId ?? 'oaiapp_browser_test';
+            window.qa.chatgpt = { activeId: id, signingIn: false, accounts: [{
+              id, email: 'reader@example.test', connected: true, planEnabled: true,
+            }] };
+            return { status: structuredClone(window.qa.chatgpt), firstPlanUse: !args.accountId };
+          }
+          case 'chatgpt_models': {
+            if (args.accountId !== window.qa.chatgpt.activeId || !window.qa.chatgpt.accounts[0]?.planEnabled) throw Error('Not authorized');
+            return { accountId: args.accountId, models: [{ slug: 'gpt-test', name: 'GPT 测试' }, { slug: 'gpt-test-fast', name: 'GPT 快速测试' }] };
+          }
+          case 'chatgpt_open_usage': window.qa.openedUsage = true; return;
+          case 'chatgpt_sign_out': {
+            window.qa.chatgpt.accounts[0].connected = false;
+            window.qa.chatgpt.accounts[0].planEnabled = false;
+            return { status: structuredClone(window.qa.chatgpt), revoked: true };
+          }
           case 'chat_request': return new Promise(resolve => {
             const { request, onChunk } = args;
             const send = callbacks.get(onChunk.id);
@@ -86,7 +107,43 @@ try {
   const openIn = async (column, path) => {
     await page.evaluate(path => { window.qa.open = [path]; }, path);
     await button(column ? column + '新建或打开文档' : '新建或打开文档').click();
-    await button('打开文档', page.locator('.new-document[open]')).click();
+    await button('打开文档', page.locator('.new-document-menu:popover-open')).click();
+  };
+  const expectAddMenuWithin = async column => {
+    const pane = page.locator(`.workspace-column[data-column="${column}"]`);
+    await pane.locator('.new-document > button').click();
+    const menu = pane.locator('.new-document-menu');
+    await expect(menu).toBeVisible();
+    const bounds = await pane.boundingBox();
+    const popup = await menu.boundingBox();
+    assert.ok(popup.x >= bounds.x && popup.x + popup.width <= bounds.x + bounds.width);
+    await expect.poll(() => menu.evaluate(element => [...element.querySelectorAll('button')].every(button => {
+      const { x, y, width, height } = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+    }))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+  };
+  const showColumn = async column => {
+    await button('布局').click();
+    await button(column).click();
+  };
+  const expectPdfTools = async () => {
+    await button('PDF 工具').click();
+    await expect(page.getByRole('combobox', { name: '缩放', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+  };
+  const sizes = selectors => page.evaluate(selectors => selectors.map(selector => {
+    const element = document.querySelector(selector);
+    const { width, height } = element.getBoundingClientRect();
+    const { fontSize, lineHeight, fontFamily } = getComputedStyle(element);
+    return { width, height, fontSize, lineHeight, fontFamily };
+  }), selectors);
+  const changeTheme = async theme => {
+    await button('设置').click();
+    await page.getByLabel('界面主题', { exact: true }).selectOption(theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await button('关闭设置').click();
   };
   const tab = name => page.getByRole('tab', { name, exact: true });
   const txt = page.getByRole('textbox', { name: 'TXT 编辑器' });
@@ -94,13 +151,35 @@ try {
   const frame = page.frameLocator('iframe[title="PDF · paper.pdf"]');
   await expect(frame.locator('.textLayer span').first()).toBeVisible({ timeout: 45000 });
   await frame.locator('body').evaluate(() => { window.workspaceIdentity = 22; });
-  await button('下栏').click();
+  await showColumn('下栏');
   await openIn('下栏', markdownPath);
-  await button('右栏').click();
+  await showColumn('右栏');
+  await expectAddMenuWithin('right');
   await openIn('右栏', textPath);
   await expect(txt).toBeVisible();
+  await expectAddMenuWithin('right');
+  await page.setViewportSize({ width: 720, height: 500 });
+  const separator = page.getByRole('separator', { name: '调整右栏宽度' });
+  await separator.press('Shift+ArrowRight');
+  await separator.press('Shift+ArrowRight');
+  await expectAddMenuWithin('right');
+  await separator.dblclick();
+  await page.setViewportSize({ width: 1200, height: 875 });
   await expect(tab('paper.pdf')).toHaveAttribute('aria-selected', 'true');
   await expect(tab('notes.md')).toHaveAttribute('aria-selected', 'true');
+  const geometry = ['.workspace-title-bar', '.window-command', '.workspace-column[data-column=upper] .document-toolbar',
+    '.zoom-group select', '.page-control input', '.workspace-column[data-column=upper] .document-tab',
+    '.workspace-column[data-column=lower] .column-tabs', '.workspace-column[data-column=right] .column-tabs',
+    '.workspace-column[data-column=right] .document-tab', '.compact-document-actions button'];
+  for (const viewport of [{ width: 1200, height: 875 }, { width: 980, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await changeTheme('light');
+    const light = await sizes(geometry);
+    await changeTheme('dark');
+    assert.deepEqual(await sizes(geometry), light);
+  }
+  await page.setViewportSize({ width: 1200, height: 875 });
+  await changeTheme('light');
   await txt.fill('kept unsaved');
   await button('右栏标签操作').click();
   await button('移到下栏').click();
@@ -118,14 +197,17 @@ try {
   await button('移到右栏').click();
   assert.equal(await frame.locator('body').evaluate(() => window.workspaceIdentity), 22);
   await expect(tab('paper.pdf')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('combobox', { name: '缩放', exact: true })).toBeVisible();
+  await expectPdfTools();
   await page.keyboard.press('Shift+F6');
   await expect(page.locator('footer')).toContainText('UTF-8');
 
   await button('新建或打开文档').click();
   await button('新建译文').click();
-  const source = page.getByRole('combobox', { name: '译文来源' });
-  await source.selectOption({ label: '固定 · paper.pdf' });
+  await button('译文来源 · 跟随右栏').click();
+  await button('固定当前 PDF').click();
+  await expect(button('译文来源 · 固定来源')).toBeVisible();
+  await expect(page.locator('.workspace-column[data-column=upper] .document-toolbar')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: '翻译面板' })).not.toContainText('paper.pdf');
   const selection = async index => {
     return frame.locator('.textLayer span[dir]').nth(index).evaluate(element => {
       const range = document.createRange();
@@ -142,19 +224,75 @@ try {
   await expect(page.getByRole('complementary', { name: '翻译面板' })).toContainText('Translating source');
   await selection(1);
   await tab('notes.txt').click();
+  await button('下栏新建或打开文档').click();
+  await button('新建译文').click();
+  const conflict = page.getByRole('dialog', { name: '译文已在上栏打开' });
+  await expect(conflict).toBeVisible();
+  await expect(conflict.getByRole('heading')).toHaveCSS('font-size', '14px');
+  await expect(button('取消', conflict)).toHaveCSS('font-size', '12px');
+  await button('取消', conflict).click();
+  await expect(tab('译文')).toHaveCount(1);
+  await button('下栏新建或打开文档').click();
+  await button('新建译文').click();
+  await button('移到下栏', conflict).click();
+  await expect(page.getByRole('tablist', { name: '下栏标签' }).getByRole('tab', { name: '译文' })).toBeVisible();
+  await expect(button('译文来源 · 固定来源')).toBeVisible();
+  await expect(page.getByRole('complementary', { name: '翻译面板' })).toContainText('Translating source');
   await page.evaluate(() => window.qa.translations[0].finish());
   await expect(page.getByRole('complementary', { name: '翻译面板' })).toContainText('Translated source');
   assert.equal((await page.evaluate(() => window.qa.translations[0].text)).trim(), selectedText.trim());
+  const translationBody = page.getByRole('complementary', { name: '翻译面板' }).locator('.markdown-body');
+  await expect(translationBody).toHaveCSS('font-size', '14px');
+  await button('设置').click();
+  await page.getByLabel('界面字号', { exact: true }).selectOption('16');
+  await expect(button('关闭设置')).toHaveCSS('font-size', '16px');
+  await expect.poll(() => frame.locator('html').evaluate(element => element.style.getPropertyValue('--ui-font-size'))).toBe('16px');
+  await expect(translationBody).toHaveCSS('font-size', '14px');
+  await page.getByLabel('译文字号', { exact: true }).selectOption('20');
+  await expect(translationBody).toHaveCSS('font-size', '20px');
+  await expect(button('关闭设置')).toHaveCSS('font-size', '16px');
+  await button('关闭设置').click();
+  await expect(tab('译文')).toHaveCSS('font-size', '15px');
   await button('关闭 译文').click();
 
   await button('新建或打开文档').click();
   await button('新建 AI 对话').click();
   const chat = page.getByRole('textbox', { name: '对话输入' });
+  await button('选择模型').click();
+  await button('配置模型服务').click();
+  const chatSettings = page.getByRole('dialog', { name: '设置' });
+  await page.getByLabel('发送快捷键', { exact: true }).selectOption('ctrl-enter');
+  await button('模型服务').click();
+  await page.getByLabel('配置服务', { exact: true }).selectOption('ollama');
+  await expect(chatSettings.getByLabel('API 密钥', { exact: true })).toHaveCount(0);
+  await page.getByLabel('本机端口', { exact: true }).fill('11435');
+  await button('检测本地模型').click();
+  await page.getByLabel('已下载的模型', { exact: true }).selectOption('qwen3:4b');
+  await page.getByRole('checkbox', { name: '设为默认模型服务' }).check();
+  await button('快捷命令', page.getByRole('navigation', { name: '对话设置分类' })).click();
+  await button('添加命令').click();
+  await page.getByLabel('命令名称', { exact: true }).last().fill('提炼');
+  await page.getByLabel('命令提示词', { exact: true }).last().fill('提炼文章中的三项主张。');
+  await button('保存对话设置').click();
+  await expect(chatSettings.getByRole('status')).toContainText('已保存对话设置');
+  await button('关闭设置').click();
+  await expect(button('选择模型')).toContainText('qwen3:4b');
+  const sources = page.getByRole('group', { name: '资料选择' });
+  await button('添加资料').click();
+  await button('notes.md', sources).click();
+  await button('加入全文').click();
+  await expect(page.locator('.chat-materials')).toContainText('notes.md');
+  await button('移除资料 notes.md').click();
+  await chat.fill('@pap');
+  await button('paper.pdf', sources).click();
   await button('加入当前页').click();
   await expect(page.locator('.chat-materials')).toContainText('paper.pdf');
+  await chat.fill('/提');
+  await button('/提炼', page.getByRole('group', { name: '可用快捷命令' })).click();
   await chat.fill('What is this article about?');
+  await chat.press('Enter');
   assert.equal(await page.evaluate(() => window.qa.requests.length), 0);
-  await button('发送').click();
+  await chat.press('Control+Enter');
   await expect(page.getByRole('log')).toContainText('Partial answer');
   await expect(page.getByRole('log')).not.toContainText('wrong session');
   await button('上栏标签操作').click();
@@ -166,24 +304,76 @@ try {
   await expect(page.getByRole('log')).not.toContainText('late');
   await button('重试').click();
   await expect.poll(() => page.evaluate(() => window.qa.requests.length)).toBe(2);
-  const requests = await page.evaluate(() => window.qa.requests.map(({ sessionId, requestId, messages }) => ({ sessionId, requestId, messages })));
+  const requests = await page.evaluate(() => window.qa.requests.map(({ sessionId, requestId, messages, provider, model, ollamaPort }) =>
+    ({ sessionId, requestId, messages, provider, model, ollamaPort })));
   assert.equal(requests[0].sessionId, requests[1].sessionId);
   assert.notEqual(requests[0].requestId, requests[1].requestId);
   assert.deepEqual(requests[0].messages, requests[1].messages);
+  assert.ok(requests.every(request => request.provider === 'ollama' && request.model === 'qwen3:4b' && request.ollamaPort === 11435));
+  assert.match(requests[0].messages[0].text, /^提炼文章中的三项主张。/);
   assert.match(requests[0].messages[0].text, /\[\[M[a-f0-9]{32}\]\]/);
   assert.ok(!requests[0].messages[0].text.includes(pdfPath));
   await page.evaluate(() => window.qa.requests[1].finish());
   await expect(page.getByRole('log')).toContainText('Answer');
+  await expect(page.getByRole('log').locator('.markdown-body')).toContainText('[1]');
+  await expect(page.getByRole('log').locator('.markdown-body')).not.toContainText('[[M');
   await button('定位原文 · paper.pdf · 第 1 页').click();
-  await expect(page.getByRole('combobox', { name: '缩放', exact: true })).toBeVisible();
+  await expectPdfTools();
 
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test-state'))?.data.workspace?.resources.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => {
+    const workspace = JSON.parse(localStorage.getItem('test-state'))?.data.workspace;
+    const savedChat = workspace?.resources.find(resource => resource.kind === 'chat');
+    return !!savedChat && workspace.order.lower.includes(savedChat.id);
+  })).toBe(true);
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test-chat'))?.data.conversations[0]?.turns[0]?.state)).toBe('complete');
   await page.reload();
   await expect(page.getByRole('tablist', { name: '右栏标签' }).getByRole('tab', { name: 'paper.pdf' })).toBeVisible();
   await expect(page.getByRole('tablist', { name: '下栏标签' }).getByRole('tab', { name: 'AI 对话' })).toBeVisible();
   await tab('AI 对话').click();
   await expect(page.getByRole('log')).toContainText('Answer');
+  await button('设置').click();
+  await expect(page.getByLabel('界面字号', { exact: true })).toHaveValue('16');
+  await expect(page.getByLabel('译文字号', { exact: true })).toHaveValue('20');
+  await button('关闭设置').click();
+  await button('选择模型').click();
+  await page.getByLabel('模型服务', { exact: true }).selectOption('chatgpt');
+  await button('配置模型服务').click();
+  await expect(chatSettings.getByLabel('配置服务', { exact: true })).toHaveValue('chatgpt');
+  await expect(chatSettings.getByLabel('API 密钥', { exact: true })).toHaveCount(0);
+  await button('使用 ChatGPT 登录', chatSettings).click();
+  const welcome = page.getByRole('dialog', { name: 'ChatGPT 订阅已连接' });
+  await expect(welcome).toBeVisible();
+  await button('知道了', welcome).click();
+  await expect(chatSettings.getByLabel('ChatGPT 账户', { exact: true })).toContainText('reader@example.test');
+  await chatSettings.getByLabel('ChatGPT 模型', { exact: true }).selectOption('gpt-test-fast');
+  await chatSettings.getByRole('checkbox', { name: '设为默认模型服务' }).check();
+  await button('保存对话设置', chatSettings).click();
+  await expect(chatSettings.getByText('已保存对话设置。', { exact: true })).toBeVisible();
+  await button('关闭设置').click();
+  await button('新对话').click();
+  await expect(button('选择模型')).toContainText('GPT 快速测试');
+  await expect(page.getByText('正在使用 ChatGPT 订阅', { exact: true }).filter({ visible: true })).toBeVisible();
+  await button('管理 ChatGPT 用量').click();
+  assert.equal(await page.evaluate(() => window.qa.openedUsage), true);
+  await chat.fill('使用订阅回答');
+  await button('发送').click();
+  await expect(page.getByRole('log')).toContainText('Partial answer');
+  const planRequest = await page.evaluate(() => {
+    const { provider, model, chatgptAccount } = window.qa.requests[0];
+    return { provider, model, chatgptAccount };
+  });
+  assert.deepEqual(planRequest, { provider: 'chatgpt', model: 'gpt-test-fast', chatgptAccount: 'oaiapp_browser_test' });
+  await page.evaluate(() => window.qa.requests[0].finish());
+  await expect(page.getByRole('log')).toContainText('Answer');
+  await button('选择模型').click();
+  await button('配置模型服务').click();
+  await button('退出账户', chatSettings).click();
+  await expect(button('使用 ChatGPT 登录', chatSettings)).toBeEnabled();
+  await button('关闭设置').click();
+  await expect(page.getByText('请在 AI 对话设置中登录 ChatGPT。', { exact: true }).filter({ visible: true })).toBeVisible();
+  await chat.fill('退出后不得发送');
+  await expect(button('发送')).toBeDisabled();
   assert.deepEqual(errors, []);
   console.log('Three-column workspace and AI browser regressions passed.');
 } finally {

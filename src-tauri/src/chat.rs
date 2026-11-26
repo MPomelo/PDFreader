@@ -1,36 +1,83 @@
-use crate::{http, secrets::{Secret, SecretStatus}, translation::ApiState};
+use crate::{chatgpt, http, secrets::{Secret, SecretStatus}, translation::ApiState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashSet, sync::atomic::{AtomicBool, Ordering}, time::Duration};
+use std::{collections::HashSet, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 use tauri::{ipc::Channel, Manager, State};
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Provider { Openai, Anthropic }
+pub enum Provider { Openai, Anthropic, Ollama, Chatgpt }
 impl Provider {
-    fn endpoint(self) -> &'static str {
+    fn cloud_endpoint(self) -> Option<&'static str> {
         match self {
-            Self::Openai => "https://api.openai.com/v1/responses",
-            Self::Anthropic => "https://api.anthropic.com/v1/messages",
+            Self::Openai | Self::Chatgpt => Some("https://api.openai.com/v1/responses"),
+            Self::Anthropic => Some("https://api.anthropic.com/v1/messages"),
+            Self::Ollama => None,
         }
     }
     fn auth(self) -> &'static str {
-        match self { Self::Openai => "bearer", Self::Anthropic => "anthropic" }
+        match self { Self::Openai | Self::Chatgpt => "bearer", Self::Anthropic => "anthropic", Self::Ollama => "none" }
     }
-    fn binding(self) -> String { format!("chat|{}", self.endpoint()) }
+    fn binding(self) -> Result<String, String> {
+        if matches!(self, Self::Chatgpt) { return Err("请通过「使用 ChatGPT 登录」授权账户。".into()); }
+        self.cloud_endpoint().map(|endpoint| format!("chat|{endpoint}")).ok_or_else(|| "Ollama 本地模型无需 API 密钥。".into())
+    }
 }
 
 #[tauri::command]
-pub fn chat_secret_status(state: State<ApiState>, provider: Provider) -> SecretStatus {
-    state.secrets.status(&provider.binding())
+pub fn chat_secret_status(state: State<ApiState>, provider: Provider) -> Result<SecretStatus, String> {
+    Ok(state.secrets.status(&provider.binding()?))
 }
 #[tauri::command]
 pub fn chat_secret_save(state: State<ApiState>, provider: Provider, key: String, session_only: bool) -> Result<SecretStatus, String> {
-    state.secrets.save(&provider.binding(), Secret(key.into_bytes()), session_only)
+    state.secrets.save(&provider.binding()?, Secret(key.into_bytes()), session_only)
 }
 #[tauri::command]
 pub fn chat_secret_delete(state: State<ApiState>, provider: Provider) -> Result<SecretStatus, String> {
-    state.secrets.delete(&provider.binding())
+    state.secrets.delete(&provider.binding()?)
+}
+
+fn ollama_url(port: u16, path: &str) -> Result<url::Url, String> {
+    if port == 0 { return Err("Ollama 本机端口无效。".into()); }
+    url::Url::parse(&format!("http://127.0.0.1:{port}/api/{path}")).map_err(|_| "Ollama 本机地址无效。".into())
+}
+
+fn local_ollama_models(body: &[u8]) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    struct Tags { models: Vec<Tag> }
+    #[derive(Deserialize)]
+    struct Tag {
+        name: String,
+        #[serde(default)]
+        remote_model: String,
+        #[serde(default)]
+        remote_host: String,
+    }
+    let tags: Tags = serde_json::from_slice(body).map_err(|_| "Ollama 返回了无法识别的模型列表。")?;
+    let mut names: Vec<_> = tags.models.into_iter().filter_map(|tag| {
+        let name = tag.name.to_ascii_lowercase();
+        let label = name.rsplit('/').next().unwrap_or(&name);
+        let (model, variant) = label.split_once(':').unwrap_or((label, ""));
+        (tag.remote_model.is_empty() && tag.remote_host.is_empty() && !model.ends_with("-cloud") &&
+            variant != "cloud" && !variant.ends_with("-cloud") && !model.is_empty()).then_some(tag.name)
+    }).collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn ollama_models(port: u16, cancel: &AtomicBool) -> Result<Vec<String>, String> {
+    let url = ollama_url(port, "tags")?;
+    let response = http::request(&url, "none", None, None, cancel, Duration::from_secs(8))
+        .map_err(|_| if cancel.load(Ordering::SeqCst) { "已停止回复。" } else { "无法连接本机 Ollama。请确认 Ollama 已启动，端口填写正确。" })?;
+    if response.status != 200 { return Err(format!("Ollama 检测返回 HTTP {}。", response.status)); }
+    local_ollama_models(&response.body)
+}
+
+#[tauri::command]
+pub async fn chat_ollama_models(port: u16) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || ollama_models(port, &AtomicBool::new(false)))
+        .await.map_err(|_| "Ollama 检测工作线程意外结束。".to_string())?
 }
 
 #[derive(Deserialize)]
@@ -48,6 +95,8 @@ pub struct ChatRequest {
     model: String,
     prompt: String,
     messages: Vec<Message>,
+    ollama_port: Option<u16>,
+    chatgpt_account: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,13 +117,18 @@ impl ChatRequest {
             return Err("对话设置或内容长度无效。请缩短本次材料，或打开新对话。".into());
         }
         let prompt = format!("{INSTRUCTIONS}\n{}", self.prompt);
-        let messages: Vec<Value> = self.messages.iter().map(|message| {
+        let mut messages: Vec<Value> = self.messages.iter().map(|message| {
             let role = match message.role { Role::User => "user", Role::Assistant => "assistant" };
             json!({"role":role,"content":message.text})
         }).collect();
         let body = match self.provider {
             Provider::Openai => json!({"model":self.model,"instructions":prompt,"input":messages,"store":false,"stream":true,"max_output_tokens":4096}),
+            Provider::Chatgpt => json!({"model":self.model,"instructions":prompt,"input":messages,"store":false,"stream":true}),
             Provider::Anthropic => json!({"model":self.model,"system":prompt,"messages":messages,"stream":true,"max_tokens":4096}),
+            Provider::Ollama => {
+                messages.insert(0, json!({"role":"system","content":prompt}));
+                json!({"model":self.model,"messages":messages,"stream":true,"options":{"num_predict":4096}})
+            }
         };
         serde_json::to_vec(&body).map_err(|_| "无法生成对话请求。".into())
     }
@@ -110,7 +164,10 @@ impl Stream {
                 self.skip_lf = byte == b'\r';
                 let line = String::from_utf8(std::mem::take(&mut self.line)).map_err(|_| "对话服务返回了无效 UTF-8。")?;
                 let line = line.trim_start_matches('\u{feff}');
-                if line.is_empty() { self.dispatch()?; }
+                if matches!(self.provider, Provider::Ollama) {
+                    if !line.trim().is_empty() { self.ollama_line(line)?; }
+                }
+                else if line.is_empty() { self.dispatch()?; }
                 else if let Some(value) = line.strip_prefix("data:") { self.data.push(value.strip_prefix(' ').unwrap_or(value).into()); }
                 else if let Some(value) = line.strip_prefix("event:") { self.event = value.trim().into(); }
             } else {
@@ -120,10 +177,21 @@ impl Stream {
         }
         Ok(())
     }
+    fn ollama_line(&mut self, line: &str) -> Result<(), String> {
+        let value: Value = serde_json::from_str(line).map_err(|_| "Ollama 返回了无效的流式数据。")?;
+        if !value["error"].is_null() { return Err("Ollama 未完成回复。请检查模型和本机内存后重试。".into()); }
+        self.append(&value["message"]["content"]);
+        if value["done"].as_bool() == Some(true) {
+            self.model = value["model"].as_str().unwrap_or_default().into();
+            self.usage = json!({"input_tokens":value["prompt_eval_count"],"output_tokens":value["eval_count"]});
+            self.done = true;
+        }
+        Ok(())
+    }
     fn dispatch(&mut self) -> Result<(), String> {
         let event = std::mem::take(&mut self.event);
         let data = std::mem::take(&mut self.data).join("\n");
-        if event == "error" { return Err("服务报告对话失败，可手动重试。".into()); }
+        if event == "error" && !matches!(self.provider, Provider::Chatgpt) { return Err("服务报告对话失败，可手动重试。".into()); }
         if data.is_empty() || data == "[DONE]" { return Ok(()); }
         let value: Value = serde_json::from_str(&data).map_err(|_| "对话服务返回了无效的流式数据。")?;
         if let Some(sequence) = value["sequence_number"].as_u64() {
@@ -131,9 +199,14 @@ impl Stream {
         }
         let kind = value["type"].as_str().unwrap_or(&event);
         match (self.provider, kind) {
+            (Provider::Chatgpt, "error" | "response.failed") => {
+                let code = value["response"]["error"]["code"].as_str()
+                    .or_else(|| value["error"]["code"].as_str()).or_else(|| value["code"].as_str());
+                return Err(chatgpt::response_error(0, code));
+            }
             (_, "error" | "response.failed" | "response.incomplete") => return Err("服务未完成此回复，可调整输入后重试。".into()),
-            (Provider::Openai, "response.output_text.delta" | "response.refusal.delta") => self.append(&value["delta"]),
-            (Provider::Openai, "response.completed") => {
+            (Provider::Openai | Provider::Chatgpt, "response.output_text.delta" | "response.refusal.delta") => self.append(&value["delta"]),
+            (Provider::Openai | Provider::Chatgpt, "response.completed") => {
                 self.model = value["response"]["model"].as_str().unwrap_or_default().into();
                 self.usage = value["response"]["usage"].clone();
                 self.done = true;
@@ -159,21 +232,38 @@ impl Stream {
     fn append(&mut self, value: &Value) {
         if let Some(text) = value.as_str() { self.text.push_str(text); }
     }
-    fn finish(self, requested_model: String) -> Result<ChatResult, String> {
+    fn finish(mut self, requested_model: String) -> Result<ChatResult, String> {
+        if !self.done && matches!(self.provider, Provider::Ollama) && !self.line.is_empty() {
+            let line = String::from_utf8(std::mem::take(&mut self.line)).map_err(|_| "Ollama 返回了无效 UTF-8。")?;
+            self.ollama_line(&line)?;
+        }
         if !self.done || self.text.trim().is_empty() { return Err("连接结束时未收到完整回复，可手动重试。".into()); }
         Ok(ChatResult { text: self.text, model: if self.model.is_empty() { requested_model } else { self.model }, usage: self.usage })
     }
 }
 
-fn perform(request: ChatRequest, state: &ApiState, cancel: &AtomicBool, channel: Channel<ChatChunk>) -> Result<ChatResult, String> {
-    let url = url::Url::parse(request.provider.endpoint()).map_err(|_| "对话服务地址无效。")?;
+fn perform(mut request: ChatRequest, app: &tauri::AppHandle, cancel: &Arc<AtomicBool>, channel: Channel<ChatChunk>) -> Result<ChatResult, String> {
+    let (url, secret) = if let Some(endpoint) = request.provider.cloud_endpoint() {
+        let secret = if matches!(request.provider, Provider::Chatgpt) {
+            let id = request.chatgpt_account.as_deref().ok_or("请先在 AI 对话设置登录 ChatGPT。")?;
+            chatgpt::access_token(app, id, cancel)?
+        } else { app.state::<ApiState>().secrets.get(&request.provider.binding()?)? };
+        (url::Url::parse(endpoint).map_err(|_| "对话服务地址无效。")?, Some(secret))
+    } else {
+        let port = request.ollama_port.unwrap_or(11434);
+        let with_default_tag = format!("{}:latest", request.model);
+        let models = ollama_models(port, cancel)?;
+        request.model = models.iter().find(|name| *name == &request.model)
+            .or_else(|| models.iter().find(|name| *name == &with_default_tag))
+            .cloned().ok_or("请选择已下载的 Ollama 本地模型。")?;
+        (ollama_url(port, "chat")?, None)
+    };
     let body = request.body()?;
-    let secret = state.secrets.get(&request.provider.binding())?;
     let mut stream = Stream::new(request.provider);
     let mut sent = 0;
     let mut sequence = 0;
     let mut last = std::time::Instant::now();
-    let response = http::request_stream(&url, request.provider.auth(), Some(&secret), Some(body), cancel, Duration::from_secs(120), &mut |bytes| {
+    let mut on_bytes = |bytes: &[u8]| {
         let parsed = stream.push(bytes);
         if cancel.load(Ordering::SeqCst) { return Err("已停止回复。".into()); }
         if sent < stream.text.len() && (stream.done || parsed.is_err() || last.elapsed() >= Duration::from_millis(60)) {
@@ -185,9 +275,21 @@ fn perform(request: ChatRequest, state: &ApiState, cancel: &AtomicBool, channel:
         }
         parsed?;
         Ok(stream.done)
-    })?;
+    };
+    let response = if matches!(request.provider, Provider::Ollama) {
+        http::request_ndjson(&url, body, cancel, Duration::from_secs(120), &mut on_bytes)
+    } else {
+        http::request_stream(&url, request.provider.auth(), secret.as_ref(), Some(body), cancel, Duration::from_secs(120), &mut on_bytes)
+    }?;
     if cancel.load(Ordering::SeqCst) { return Err("已停止回复。".into()); }
     if !(200..300).contains(&response.status) {
+        if matches!(request.provider, Provider::Chatgpt) {
+            let value: Value = serde_json::from_slice(&response.body).unwrap_or_default();
+            return Err(chatgpt::response_error(response.status, value["error"]["code"].as_str()));
+        }
+        if matches!(request.provider, Provider::Ollama) {
+            return Err(format!("Ollama 返回 HTTP {}。请检查本地模型和本机内存。", response.status));
+        }
         return Err(match response.status {
             401 | 403 => "服务拒绝了凭据，请检查所选服务的 API 密钥和访问权限。".into(),
             429 => "服务限制了请求，请检查配额或稍后重试。".into(),
@@ -202,7 +304,7 @@ pub async fn chat_request(app: tauri::AppHandle, state: State<'_, ApiState>, req
     let id = request.request_id.clone();
     let cancel = state.start_job(&id)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
-        perform(request, &app.state::<ApiState>(), &cancel, on_chunk)
+        perform(request, &app, &cancel, on_chunk)
     }).await.map_err(|_| "对话工作线程意外结束。".to_string());
     state.finish_job(&id)?;
     result?
@@ -240,5 +342,60 @@ mod tests {
         let mut stream = Stream::new(Provider::Anthropic);
         let err = stream.push(b"event: error\ndata: {\"error\":\"private\"}\n\n").unwrap_err();
         assert!(!err.contains("private"));
+    }
+    #[test]
+    fn chatgpt_plan_requests_use_the_supported_responses_fields() {
+        let request: ChatRequest = serde_json::from_value(json!({
+            "requestId":"request", "sessionId":"chat", "provider":"chatgpt", "model":"gpt-example",
+            "prompt":"", "messages":[{"role":"user","text":"hello"}], "chatgptAccount":"oaiapp_example"
+        })).unwrap();
+        let body: Value = serde_json::from_slice(&request.body().unwrap()).unwrap();
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["model"], "gpt-example");
+        assert!(body.get("max_output_tokens").is_none());
+        assert!(body.get("chatgptAccount").is_none());
+        assert!(Provider::Chatgpt.binding().is_err());
+        let mut stream = Stream::new(Provider::Chatgpt);
+        let error = stream.push(b"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n").unwrap_err();
+        assert!(error.contains("用量上限"));
+    }
+    #[test]
+    fn ollama_models_exclude_cloud_names_and_remote_aliases() {
+        let models = local_ollama_models(br#"{"models":[
+            {"name":"qwen3:4b"},
+            {"name":"qwen3:4b"},
+            {"name":"gemma3:latest"},
+            {"name":"gpt-oss:120b-cloud"},
+            {"name":"gemini-3-flash-preview:cloud"},
+            {"name":"nemotron-cloud:latest"},
+            {"name":"custom:latest","remote_model":"qwen"},
+            {"name":"alias:latest","remote_host":"https://ollama.com"}
+        ]}"#).unwrap();
+        assert_eq!(models, ["gemma3:latest", "qwen3:4b"]);
+        assert_eq!(ollama_url(11435, "chat").unwrap().as_str(), "http://127.0.0.1:11435/api/chat");
+        assert!(ollama_url(0, "chat").is_err());
+        assert!(Provider::Ollama.binding().is_err());
+    }
+    #[test]
+    fn ollama_ndjson_streams_text_and_requires_a_terminal_record() {
+        let mut stream = Stream::new(Provider::Ollama);
+        let payload = concat!(
+            "{\"message\":{\"thinking\":\"internal\",\"content\":\"中\"},\"done\":false}\r\n",
+            "{\"message\":{\"content\":\"文\"},\"done\":false}\n",
+            "{\"model\":\"qwen3:4b\",\"done\":true,\"prompt_eval_count\":3,\"eval_count\":2}"
+        );
+        for byte in payload.as_bytes() { stream.push(&[*byte]).unwrap(); }
+        let result = stream.finish("requested".into()).unwrap();
+        assert_eq!(result.text, "中文");
+        assert_eq!(result.model, "qwen3:4b");
+        assert_eq!(result.usage["input_tokens"], 3);
+        assert_eq!(result.usage["output_tokens"], 2);
+        let mut stream = Stream::new(Provider::Ollama);
+        stream.push(b"{\"message\":{\"content\":\"partial\"}}\n").unwrap();
+        assert!(stream.finish("requested".into()).is_err());
+        let mut stream = Stream::new(Provider::Ollama);
+        let error = stream.push(b"{\"error\":\"private server details\"}\n").unwrap_err();
+        assert!(!error.contains("private"));
     }
 }

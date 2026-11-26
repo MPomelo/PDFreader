@@ -5,6 +5,10 @@
 [data-accent=amber] { --accent-light: #895103; --accent-dark: #f7c365; --accent-solid: #895103; }
 
 :root {
+  --ui-font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --ui-font-size: 12px;
+  --ui-compact-font-size: calc(var(--ui-font-size) - 1px);
+  --ui-heading-font-size: calc(var(--ui-font-size) + 2px);
   --accent: light-dark(var(--accent-light), var(--accent-dark));
   --focus: var(--accent);
   --selected: color-mix(in srgb, var(--accent) 14%, transparent);

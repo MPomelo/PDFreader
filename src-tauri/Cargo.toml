@@ -1,6 +1,6 @@
 [package]
 name = "pdfreader"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/MPomelo/PDFreader"
@@ -18,5 +18,5 @@ sha2 = "0.10"
 base64 = "=0.22.1"
 encoding_rs = "=0.8.35"
 url = "=2.5.8"
-windows-sys = { version = "=0.61.2", features = ["Win32_Security_Credentials", "Win32_Foundation", "Win32_Networking_WinHttp"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Foundation", "Win32_Networking_WinHttp", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 tauri-plugin-single-instance = "=2.5.5"

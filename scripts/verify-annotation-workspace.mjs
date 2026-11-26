@@ -35,7 +35,7 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const frame = page.frameLocator('.document-pane[data-active=true] iframe');
-  const toolbar = page.getByRole('banner', { name: '文档工具栏' });
+  const toolbar = page.getByRole('toolbar', { name: '文档工具栏' });
   const panel = page.getByRole('complementary', { name: '批注管理' });
   const button = (name, root = page) => root.getByRole('button', { name, exact: true });
   const hiddenInput = page.locator('input[type=file]');

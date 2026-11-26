@@ -28,7 +28,7 @@ const phrases = EditorState.phrases.of({
   replace: '替换当前', 'replace all': '全部替换', close: '关闭查找',
 });
 const theme = EditorView.theme({
-  '&': { height: '100%', backgroundColor: 'var(--panel)', color: 'var(--text)' },
+  '&': { height: '100%', fontSize: 'var(--ui-font-size)', backgroundColor: 'var(--panel)', color: 'var(--text)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: 'Consolas, "Microsoft YaHei", monospace', lineHeight: '1.65' },
   '.cm-content': { padding: '12px 0', caretColor: 'var(--text)' },

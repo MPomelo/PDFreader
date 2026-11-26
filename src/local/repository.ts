@@ -5,9 +5,10 @@ import type { ApiConfig, ApiResult, Profile } from '../translation/client';
 import { DEFAULT_ACCENT, isAccent, type Accent, type ThemeMode } from '../ui/appearance';
 export type Layout = { left: boolean; right: boolean; reading: boolean; floating: boolean; leftWidth: number; rightWidth: number; theme: ThemeMode; accent?: Accent };
 export type Recent = { fingerprint: string; name: string; path: string; page: number; zoom: string; time: string };
+export const UI_FONT_SIZES = [12, 13, 14, 16];
 export const TRANSLATION_FONT_SIZES = [14, 16, 18, 20];
-export type ReaderPreferences = { restoreProgress: boolean; defaultZoom: string; selectionPopup: boolean; showMetadata: boolean; showOriginal: boolean; translationFontSize: number };
-export const DEFAULT_READER_PREFERENCES: ReaderPreferences = { restoreProgress: true, defaultZoom: 'auto', selectionPopup: true, showMetadata: false, showOriginal: false, translationFontSize: TRANSLATION_FONT_SIZES[0] };
+export type ReaderPreferences = { restoreProgress: boolean; defaultZoom: string; selectionPopup: boolean; showMetadata: boolean; showOriginal: boolean; uiFontSize: number; translationFontSize: number };
+export const DEFAULT_READER_PREFERENCES: ReaderPreferences = { restoreProgress: true, defaultZoom: 'auto', selectionPopup: true, showMetadata: false, showOriginal: false, uiFontSize: UI_FONT_SIZES[0], translationFontSize: TRANSLATION_FONT_SIZES[0] };
 export type Book = { version: 1; layout: Layout; recents: Recent[]; preferences?: ReaderPreferences; workspace?: unknown };
 export type Note = { id: string; fingerprint: string; name: string; page: number; original: string; originalRaw: string; markdown: string; model: string; service: string; domain: string; language: string; time: string };
 type Notebook = { version: 1; notes: Note[] };
@@ -31,8 +32,10 @@ export function validate(kind: Kind, value: unknown): RecordData {
     const layout = data.layout;
     if (data.preferences != null) {
       if (!['restoreProgress','selectionPopup','showMetadata','showOriginal'].every(k => typeof data.preferences[k] === 'boolean') || !['auto','page-width','page-fit','1','1.25','1.5','2'].includes(data.preferences.defaultZoom)) throw Error('阅读设置数据无效，未覆盖原文件');
-      if (!TRANSLATION_FONT_SIZES.includes(data.preferences.translationFontSize)) {
-        data.preferences = { ...data.preferences, translationFontSize: DEFAULT_READER_PREFERENCES.translationFontSize };
+      for (const [setting, sizes] of [['uiFontSize', UI_FONT_SIZES], ['translationFontSize', TRANSLATION_FONT_SIZES]] as const) {
+        if (!sizes.includes(data.preferences[setting])) {
+          data.preferences = { ...data.preferences, [setting]: DEFAULT_READER_PREFERENCES[setting] };
+        }
       }
     }
     if (!layout || !['system','light','dark'].includes(layout.theme) || layout.accent !== undefined && !isAccent(layout.accent) || !['left','right','reading','floating'].every(k => typeof layout[k] === 'boolean') || !Number.isFinite(layout.leftWidth) || layout.leftWidth < 160 || layout.leftWidth > 400 || !Number.isFinite(layout.rightWidth) || layout.rightWidth < 280 || layout.rightWidth > 720 || !Array.isArray(data.recents) || data.recents.length > 20 || !data.recents.every((r: Recent) => r && hashPattern.test(r.fingerprint) && text(r.name, 1000) && text(r.path, 32768) && Number.isSafeInteger(r.page) && r.page > 0 && text(r.zoom, 40) && text(r.time, 50))) throw Error('阅读进度数据损坏，未覆盖原文件');

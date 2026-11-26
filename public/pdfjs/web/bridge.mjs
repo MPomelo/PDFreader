@@ -296,6 +296,10 @@ window.addEventListener('message', event => {
   if (message.type === 'theme' && ['light','dark'].includes(message.theme)) {
     document.documentElement.dataset.theme = message.theme;
     document.documentElement.dataset.accent = message.accent;
+    const { uiFontSize } = message;
+    if (Number.isInteger(uiFontSize) && uiFontSize >= 12 && uiFontSize <= 16) {
+      document.documentElement.style.setProperty('--ui-font-size', uiFontSize + 'px');
+    }
     return;
   }
   if (message.type === 'selection-toolbar') {

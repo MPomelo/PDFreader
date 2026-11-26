@@ -5,6 +5,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
 import { common } from 'lowlight';
+import type { Element, Root } from 'hast';
 import { katexOptions, prepareDocumentMath } from './document-math';
 import { mathSource, prepareMarkdown } from './markdown';
 import 'katex/dist/katex.min.css';
@@ -12,19 +13,36 @@ import './markdown.css';
 
 type PreviewImage = ComponentType<{ alt: string; src: string; title?: string }>;
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ source, pending = false, onCopy, image, onCopyCode }: {
+function rehypeReferences(markers: string) {
+  const numbers = new Map(markers.split(' ').map((marker, index) => [marker, index + 1]));
+  function formatReferences(node: Root | Element) {
+    node.children = node.children.flatMap(child => {
+      if (child.type === 'element' && !['pre', 'code', 'a', 'math'].includes(child.tagName)) formatReferences(child);
+      if (child.type !== 'text' || !child.value.includes('[[M')) return [child];
+      return child.value.split(/(\[\[M[a-f0-9]{32}\]\])/g).map((value, index) => {
+        const number = index % 2 ? numbers.get(value.slice(2, -2)) : undefined;
+        return { type: 'text', value: number ? `[${number}]` : value };
+      });
+    });
+  }
+  return formatReferences;
+}
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({ source, pending = false, onCopy, image, onCopyCode, referenceMarkers }: {
   source: string;
   pending?: boolean;
   onCopy?: (text: string) => void;
   image?: PreviewImage;
   onCopyCode?: (text: string) => void;
+  referenceMarkers?: string;
 }) {
   const document = image ? prepareDocumentMath(source) : null;
   const { markdown, tail } = document ? { markdown: document.markdown, tail: '' } : prepareMarkdown(source, !pending);
   const Image = image;
   return <div className="markdown-body">
     <Markdown skipHtml remarkPlugins={document ? [remarkGfm, remarkMath, document.preserveInvalidMath] : [remarkGfm, remarkMath]}
-      rehypePlugins={document ? [[rehypeKatex, katexOptions], [rehypeHighlight, { languages: common, detect: false }]] : [[rehypeKatex, katexOptions]]}
+      rehypePlugins={document ? [[rehypeKatex, katexOptions], [rehypeHighlight, { languages: common, detect: false }]]
+        : referenceMarkers ? [[rehypeReferences, referenceMarkers], [rehypeKatex, katexOptions]] : [[rehypeKatex, katexOptions]]}
       components={{
         img: ({ alt, src, title }) => Image && typeof src === 'string'
           ? <Image alt={alt || ''} src={src} title={title ?? undefined} />

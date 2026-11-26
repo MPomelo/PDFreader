@@ -3,18 +3,17 @@ import { api, MATH_TEST_TEXT, RequestGate, StreamAccumulator, selectionIdentity,
 import type { ReaderState } from '../reader/ReaderAdapter';
 import { TranslationOutput } from './TranslationOutput';
 import { repository, cacheKey } from '../local/repository';
-import { Pin20Regular, Dismiss20Regular, Settings20Regular } from '@fluentui/react-icons';
 
 export const API_SETTINGS_CHANGED = 'pdfreader-api-settings-changed';
-type Props = { keepSnapshot?: boolean; mode?: 'panel' | 'settings'; settingsSection?: 'translation' | 'api'; active?: boolean; automatic?: boolean; onAutomatic?: (enabled: boolean) => void; onDirtyChange?: (dirty: boolean) => void; showMetadata?: boolean; showOriginal?: boolean; reader: ReaderState | null; visible: boolean; settingsOpen: boolean;
-  onSettings: (open: boolean) => void; onComment: () => void; disabled: boolean; documentKey?: string; documentName?: string; floating?: boolean; onPin?: () => void; onClose?: () => void; translateSignal?: number };
+type Props = { keepSnapshot?: boolean; mode?: 'panel' | 'settings'; settingsSection?: 'translation' | 'api'; active?: boolean; automatic?: boolean; onAutomatic?: (enabled: boolean) => void; onDirtyChange?: (dirty: boolean) => void; showMetadata?: boolean; showOriginal?: boolean; reader: ReaderState | null; visible: boolean; sourceClosed?: boolean;
+  onSettings: (open: boolean) => void; disabled: boolean; documentKey?: string; documentName?: string; translateSignal?: number };
 export type DisplayResult = { response: ApiResult; original: string; originalRaw: string; page: number; test: boolean; domain?: string; language?: string; cached?: boolean; testKind?: 'test' | 'math-test'; service: string; outcome: 'complete' | 'streaming' | 'cancelled' | 'error' };
 const prompts = {
   general: '准确翻译为目标语言，保持原文语气与段落，只输出译文。',
   academic: '忠实翻译学术文本，保留公式、引用编号、变量及 Markdown 结构；只输出译文，不补写原文缺失内容。',
   ai: '准确翻译计算机与人工智能论文，注意模型、训练流程、数据集和指标术语；保留数学公式、变量、引用编号，只输出译文。',
 };
-export function TranslationPanel({ keepSnapshot = false, mode = 'panel', settingsSection = 'translation', active = true, automatic = false, onAutomatic, onDirtyChange, showMetadata = false, showOriginal = false, reader, visible, settingsOpen, onSettings, onComment, disabled, documentKey = '', documentName = '', floating, onPin, onClose, translateSignal = 0 }: Props) {
+export function TranslationPanel({ keepSnapshot = false, mode = 'panel', settingsSection = 'translation', active = true, automatic = false, onAutomatic, onDirtyChange, showMetadata = false, showOriginal = false, reader, visible, sourceClosed = false, onSettings, disabled, documentKey = '', documentName = '', translateSignal = 0 }: Props) {
   const [config, setConfig] = useState<ApiConfig | null>(null);
   const [saved, setSaved] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -168,6 +167,9 @@ export function TranslationPanel({ keepSnapshot = false, mode = 'panel', setting
     }
   }
   function cancel() { gate.current.invalidate(); runLock.current = false; setBusy(''); setNotice('已取消请求，保留的内容尚未完成。'); if (latestLive.current) updateLive({ ...latestLive.current, outcome: 'cancelled' }); }
+  useEffect(() => {
+    if (sourceClosed && runLock.current) cancel();
+  }, [sourceClosed]);
   runRef.current = run;
   const appliedSignal = useRef(0);
   useEffect(() => {
@@ -243,19 +245,18 @@ export function TranslationPanel({ keepSnapshot = false, mode = 'panel', setting
         {dirty && <p className="muted">设置尚未保存；保存后可配置密钥、测试或翻译。</p>}
 
       {!!busy && <div role="status" className="panel-actions"><span>正在测试…</span><button onClick={cancel}>取消</button></div>}
-      {displayed && <TranslationOutput result={displayed} copy={value => { void copy(value); }} showMetadata={showMetadata} showOriginal={showOriginal} saveNote={documentKey ? () => { void saveAsNote(); } : undefined} retry={() => { void run(displayed.testKind || (displayed.test ? 'test' : 'translate'), displayed); }} disabled={dirty || !!busy || saving || (profile?.auth !== 'none' && !status.available)} />}
+      {displayed && <TranslationOutput result={displayed} copy={value => { void copy(value); }} showMetadata={showMetadata} showOriginal={showOriginal} saveNote={documentKey ? () => { void saveAsNote(); } : undefined} retry={() => { void run(displayed.testKind || (displayed.test ? 'test' : 'translate'), displayed); }} disabled={disabled || dirty || !!busy || saving || (profile?.auth !== 'none' && !status.available)} />}
     </>}
     {error && <p className="panel-error" role="alert">{error}</p>}{notice && <p className="muted" role="status">{notice}</p>}
   </section>;
   return <aside className="translation" aria-label="翻译面板">
-    <div className="panel-heading"><h2>译文</h2><div className="heading-actions">{floating && <button aria-label="固定到侧栏" title="固定到侧栏" onClick={onPin}><Pin20Regular /></button>}<button aria-label="翻译设置" title="翻译设置" onClick={() => onSettings(true)}><Settings20Regular /></button>{onClose && <button aria-label="关闭翻译" title="关闭翻译" onClick={onClose}><Dismiss20Regular /></button>}</div></div>
     {loadError ? <p className="panel-error" role="alert">{loadError}</p> : !api.desktop() ? <p className="hint">在桌面版设置中配置翻译服务。</p> : !config || !profile ? <p className="hint">正在读取设置…</p> : <>
       {!displayed && <>{text ? <><details className="selection-preview"><summary>已选 {text.length} 字 · 第 {selectedPage} 页</summary><p className="selection">{text}</p></details><button className="primary translate-primary" disabled={disabled || dirty || !!busy || saving || !profile.model.trim() || (profile.auth !== 'none' && !status.available)} onMouseDown={event => event.preventDefault()} onClick={() => void run('translate')}>翻译选区</button>{profile.auth !== 'none' && !status.available && <button className="muted" onClick={() => onSettings(true)}>配置翻译服务</button>}</> : <div className="translation-empty"><p>{reader?.pageHasText === false ? '此页暂无可提取文字' : '选择文字，开始翻译'}</p><span>Ctrl + Shift + Enter</span></div>}</>}
       {keepSnapshot && displayed && !!text && displayed.originalRaw !== selectedRaw && <button className="translate-primary"
       disabled={disabled || dirty || !!busy || saving || !profile.model.trim() || (profile.auth !== 'none' && !status.available)}
       onMouseDown={event => event.preventDefault()} onClick={() => { void run('translate'); }}>翻译当前选区</button>}
     {!!busy && <div className="request-actions"><span role="status">翻译中</span><button onClick={cancel}>取消</button></div>}
-      {displayed && <TranslationOutput result={displayed} copy={value => { void copy(value); }} showMetadata={showMetadata} showOriginal={showOriginal} saveNote={documentKey ? () => { void saveAsNote(); } : undefined} retry={() => { void run(displayed.testKind || (displayed.test ? 'test' : 'translate'), displayed); }} disabled={dirty || !!busy || saving || (profile?.auth !== 'none' && !status.available)} />}
+      {displayed && <TranslationOutput result={displayed} copy={value => { void copy(value); }} showMetadata={showMetadata} showOriginal={showOriginal} saveNote={documentKey ? () => { void saveAsNote(); } : undefined} retry={() => { void run(displayed.testKind || (displayed.test ? 'test' : 'translate'), displayed); }} disabled={disabled || dirty || !!busy || saving || (profile?.auth !== 'none' && !status.available)} />}
     </>}
     {error && <p className="panel-error" role="alert">{error}</p>}{notice && <p className="translation-notice" role="status">{notice}</p>}
   </aside>;

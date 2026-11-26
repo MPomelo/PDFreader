@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown20Regular, ChevronUp20Regular, Dismiss20Regular, Search20Regular } from '@fluentui/react-icons';
 import type { FindOptions, ReaderAdapter, ReaderState } from '../reader/ReaderAdapter';
 
@@ -7,9 +7,10 @@ const optionLabels: ReadonlyArray<[keyof FindOptions, string]> = [
   ['entireWord', '全字匹配'], ['matchDiacritics', '区分变音符号'],
 ];
 
-export function DocumentFind({ adapter, result, disabled }: {
-  adapter?: ReaderAdapter; result?: ReaderState['find']; disabled: boolean;
+export function DocumentFind({ adapter, result, disabled, keyboardActive = true }: {
+  adapter?: ReaderAdapter; result?: ReaderState['find']; disabled: boolean; keyboardActive?: boolean;
 }) {
+  const panelId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [requestId, setRequestId] = useState('');
@@ -64,7 +65,7 @@ export function DocumentFind({ adapter, result, disabled }: {
     return () => window.removeEventListener('resize', position);
   }, [disabled, open]);
   useEffect(() => {
-    if (disabled || !adapter) return;
+    if (disabled || !adapter || !keyboardActive) return;
     function keydown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.isComposing || event.altKey) return;
       const key = event.key.toLowerCase();
@@ -96,9 +97,9 @@ export function DocumentFind({ adapter, result, disabled }: {
     }
   }
   return <div className="document-find">
-    <button ref={trigger} type="button" aria-label="查找" aria-expanded={visible} aria-controls="document-find-panel"
+    <button ref={trigger} type="button" aria-label="查找" aria-expanded={visible} aria-controls={panelId}
       title="查找文档文字 (Ctrl+F)" disabled={disabled} onClick={() => visible ? close(true) : show()}><Search20Regular /></button>
-    {visible && <div ref={panel} className="document-find-panel" id="document-find-panel" role="search" aria-label="文档内查找">
+    {visible && <div ref={panel} className="document-find-panel" id={panelId} role="search" aria-label="文档内查找">
       <div className="document-find-controls">
         <input ref={input} type="search" value={query} aria-label="查找文档文字" aria-invalid={match?.status === 'not-found'} placeholder="查找文档文字"
           onCompositionStart={() => { composing.current = true; }}

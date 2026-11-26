@@ -12,6 +12,11 @@
 :root{color-scheme:light;--main-color:#242424;--toolbar-icon-bg-color:#242424;--toolbar-icon-hover-bg-color:#242424;--toolbar-icon-opacity:1;--field-color:#242424;--field-bg-color:#fff}
 :root[data-theme=light]{color-scheme:light!important}
 :root[data-theme=dark]{color-scheme:dark!important;--toolbar-bg-color:#252525;--toolbar-border-color:#484848;--body-bg-color:#171717;--button-hover-color:#383838;--main-color:#eee;--toolbar-icon-bg-color:#eee;--toolbar-icon-hover-bg-color:#eee;--field-color:#eee;--field-bg-color:#303030}
+.pdfreader-host-toolbar :is(#passwordDialog, #documentPropertiesDialog) {
+  --button-font-size: var(--ui-font-size);
+  font: var(--ui-font-size)/1.45 var(--ui-font-family);
+}
+.pdfreader-host-toolbar #passwordDialog input { font: inherit; }
 .toolbarButton:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 /* Standalone note editors contain only the upstream comment marker. */
 .annotationEditorLayer .pdfreaderNoteEditor{position:absolute;pointer-events:none;background:transparent;outline:none}
@@ -41,7 +46,7 @@
   border-radius: 5px;
   background: transparent;
   color: inherit;
-  font: 13px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: var(--ui-font-size)/1.4 var(--ui-font-family);
   cursor: pointer;
 }
 .pdfreader-selection-toolbar button:hover { background: var(--selected); color: var(--accent); }
@@ -75,7 +80,7 @@
 }
 .pdfreader-link-preview-label {
   padding: 3px 6px 5px;
-  font: 11px/1.3 "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: var(--ui-compact-font-size)/1.3 var(--ui-font-family);
 }
 .pdfreader-link-preview-image { overflow: hidden; border-radius: 4px; }
 .pdfreader-link-preview canvas { display: block; }

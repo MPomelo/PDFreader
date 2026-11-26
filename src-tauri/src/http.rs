@@ -45,14 +45,21 @@ fn wait(receiver: &mpsc::Receiver<Event>, expected: u32, cancel: &AtomicBool, de
     }
 }
 pub fn request(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration) -> Result<Response, String> {
-    request_with(url, auth, secret, body, cancel, timeout, None)
+    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "application/json"), None)
+}
+pub fn request_form(url: &url::Url, body: Vec<u8>, cancel: &AtomicBool, timeout: Duration) -> Result<Response, String> {
+    request_with(url, "none", None, Some(body), cancel, timeout, ("application/x-www-form-urlencoded", "application/json"), None)
 }
 pub fn request_stream(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration,
     chunk: &mut dyn FnMut(&[u8]) -> Result<bool, String>) -> Result<Response, String> {
-    request_with(url, auth, secret, body, cancel, timeout, Some(chunk))
+    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "text/event-stream"), Some(chunk))
+}
+pub fn request_ndjson(url: &url::Url, body: Vec<u8>, cancel: &AtomicBool, timeout: Duration,
+    chunk: &mut dyn FnMut(&[u8]) -> Result<bool, String>) -> Result<Response, String> {
+    request_with(url, "none", None, Some(body), cancel, timeout, ("application/json", "application/x-ndjson"), Some(chunk))
 }
 fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration,
-    mut chunk_handler: Option<&mut dyn FnMut(&[u8]) -> Result<bool, String>>) -> Result<Response, String> {
+    (content_type, accept): (&str, &str), mut chunk_handler: Option<&mut dyn FnMut(&[u8]) -> Result<bool, String>>) -> Result<Response, String> {
     if cancel.load(Ordering::SeqCst) { return Err("已取消请求。".into()); }
     let deadline = Instant::now() + timeout;
     let (sender, receiver) = mpsc::channel();
@@ -77,7 +84,7 @@ fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Optio
         if WinHttpSetOption(request.0, WINHTTP_OPTION_CONTEXT_VALUE, (&owned as *const usize).cast(), std::mem::size_of::<usize>() as u32) == 0 {
             drop(Arc::from_raw(owned as *const Context)); return Err(error(GetLastError()));
         }
-        let mut headers = format!("Content-Type: application/json\r\nAccept: {}\r\n", if chunk_handler.is_some() { "text/event-stream" } else { "application/json" });
+        let mut headers = format!("Content-Type: {content_type}\r\nAccept: {accept}\r\n");
         if auth != "none" {
             let key = std::str::from_utf8(&secret.ok_or("未配置密钥")?.0).map_err(|_| "密钥编码无效")?;
             headers.push_str(match auth {

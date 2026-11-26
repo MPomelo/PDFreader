@@ -8,7 +8,7 @@
   align-items: center;
 }
 .annotation-controls button, .annotation-width, .annotation-width-button {
-  font-size: 12px;
+  font-size: var(--ui-font-size);
 }
 .annotation-controls button:nth-child(3) {
   margin-inline-start: auto;
@@ -18,14 +18,14 @@
 }
 .annotation-meta {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--ui-font-size);
 }
 .annotation-panel blockquote {
   margin: 8px 0 14px;
   padding: 7px 10px;
   border-inline-start: 2px solid var(--accent);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--ui-font-size);
   overflow-wrap: anywhere;
 }
 .annotation-page h3 {
@@ -45,7 +45,7 @@
   justify-content: stretch;
   gap: 3px;
   text-align: start;
-  font-size: 12px;
+  font-size: var(--ui-font-size);
 }
 .annotation-entry span {
   color: var(--muted);
@@ -73,7 +73,7 @@
   border-radius: 3px;
 }
 .annotation-note {
-  font-size: 13px;
+  font-size: var(--ui-font-size);
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

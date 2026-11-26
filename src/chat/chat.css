@@ -1,15 +1,50 @@
-.chat-pane { display: flex; flex: 1; flex-direction: column; gap: 6px; min-height: 0; color: var(--text); background: var(--panel); font-size: 13px; }
-.chat-pane .workspace-feature-header { padding-inline: 8px; gap: 4px; }
-.chat-pane input:not([type=checkbox]), .chat-pane select { max-width: 145px; }
-.chat-pane button { font-size: 12px; min-height: 27px; }
-.chat-messages { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px; }
-.chat-turn + .chat-turn { margin-top: 12px; border-top: 1px solid var(--border); }
-.chat-question { background: var(--surface); padding: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.chat-model { color: var(--muted); font-size: 12px; margin-block: 6px; }
-.chat-form { max-height: 65%; overflow: auto; padding: 0 8px 8px; border-top: 1px solid var(--border); }
-.chat-form .field { margin: 5px 0; }
-.chat-form .field textarea { min-height: 48px; resize: vertical; }
-.chat-materials, .chat-history { max-height: 110px; overflow: auto; padding: 2px 8px; margin: 0; list-style: none; }
-.chat-materials li, .chat-history li { display: flex; gap: 6px; justify-content: space-between; align-items: start; }
-.chat-materials p { margin: 5px; }
-.chat-settings h3 { font-size: 14px; margin-top: 20px; }
+.chat-pane { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; color: var(--text); background: var(--panel); font-size: var(--ui-font-size); }
+.chat-pane button { min-height: 28px; padding: 4px 7px; gap: 4px; font-size: inherit; }
+.chat-pane button svg { width: 16px; height: 16px; }
+.chat-header, .chat-composer-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.chat-header { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.chat-header label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--muted); }
+.chat-new, .chat-send { margin-inline-start: auto; }
+.chat-messages { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; }
+.chat-empty { color: var(--muted); margin: 4px 0; }
+.chat-turn + .chat-turn { margin-top: 16px; border-top: 1px solid var(--border); }
+.chat-question { background: var(--selected); padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-model { color: var(--muted); font-size: inherit; margin-block: 6px; overflow-wrap: anywhere; }
+.chat-citation { color: var(--accent); background: var(--selected); text-align: start; overflow-wrap: anywhere; }
+.chat-form { position: relative; margin: 6px 8px 8px; padding: 6px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.chat-form:focus-within { border-color: var(--accent); }
+.chat-form > textarea { display: block; outline: none; padding: 5px 4px; color: inherit; background: transparent; border: 0; min-height: 42px; max-height: 20vh; width: 100%; resize: vertical; }
+.chat-composer-actions > button:not(.primary)[aria-expanded=true] { background: var(--selected); color: var(--accent); }
+.chat-composer-actions .chat-model-select { min-width: 0; max-width: 55%; }
+.chat-model-select span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-picker { position: absolute; inset-inline: 0; bottom: calc(100% + 5px); z-index: 2; display: flex; flex-direction: column; align-items: stretch; padding: 5px; max-height: min(216px, 28vh); overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); box-shadow: 0 5px 16px #0003; }
+.chat-picker button { flex: none; justify-content: flex-start; overflow-wrap: anywhere; text-align: start; }
+.chat-picker .field { margin: 3px 5px; }
+.chat-picker .field input, .chat-picker .field select { padding: 4px; }
+.chat-picker p, .chat-notice { margin: 4px; color: var(--muted); overflow-wrap: anywhere; }
+.chat-history, .chat-materials { max-height: min(120px, 16vh); overflow: auto; padding: 4px; margin: 0; list-style: none; }
+.chat-materials { display: flex; flex-wrap: wrap; gap: 4px; }
+.chat-materials li, .chat-history li { display: flex; gap: 4px; justify-content: space-between; align-items: start; min-width: 0; }
+.chat-materials li { max-width: 100%; border-radius: 4px; background: var(--selected); padding-inline-start: 5px; }
+.chat-materials details { min-width: 0; padding-block: 4px; }
+.chat-materials summary { overflow-wrap: anywhere; cursor: pointer; }
+.chat-materials button { flex: none; min-width: 24px; min-height: 24px; padding: 3px; }
+.chat-materials p { margin: 4px; }
+.chat-pane .chat-command-chip { margin: 4px; background: var(--selected); color: var(--accent); }
+.chat-settings-nav, .chat-settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.chat-settings-nav { border-bottom: 1px solid var(--border); }
+.chat-settings-nav button { display: inline-flex; width: auto; border-radius: 4px 4px 0 0; border-bottom: 2px solid transparent; }
+.chat-settings-nav button[aria-current] { border-bottom-color: var(--accent); color: var(--accent); }
+.chat-settings-fields { margin: 12px 0; padding: 0; min-width: 0; border: 0; }
+.chat-settings-fields h3 { font-size: inherit; margin: 16px 0 5px; }
+.chat-settings-save { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.chat-settings-save p { margin: 0; overflow-wrap: anywhere; }
+.chat-command-settings { padding-block-end: 8px; margin-block-end: 8px; border-bottom: 1px solid var(--border); }
+.chatgpt-settings { margin-block-start: 14px; padding-block-start: 1px; border-top: 1px solid var(--border); }
+.chatgpt-settings .chatgpt-login { color: light-dark(#fff, #131313); background: light-dark(#171717, #f2f2f2); padding-inline: 14px; }
+.chatgpt-settings .chatgpt-login:hover { background: light-dark(#343434, #e0e0e0); }
+.chatgpt-plan { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: space-between; padding-inline: 5px; color: var(--muted); }
+.chatgpt-plan button { color: var(--accent); }
+.chatgpt-welcome { width: min(420px, calc(100vw - 32px)); background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+.chatgpt-welcome h3 { margin-top: 0; }
+.chatgpt-welcome::backdrop { background: #0006; }

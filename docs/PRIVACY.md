@@ -1,7 +1,7 @@
 # Privacy and local data
 
-PDFreader does not include analytics, account login, cloud sync, or an application
-backend. PDF rendering, annotations, reading state, translation notes, and cache
+PDFreader does not include analytics, cloud sync, or its own application backend.
+PDF rendering, annotations, reading state, translation notes, and cache
 are local. Markdown and TXT are read and saved on disk. Markdown attachments are
 kept next to the document in its `.assets` folder. A network image contacts its
 server when you click its load button. WebView2 itself follows Microsoft's runtime behavior and update policy.
@@ -14,11 +14,19 @@ and billing apply. Optional model listing and fixed test buttons also contact
 that provider when explicitly clicked.
 
 An AI conversation sends the question, reviewed excerpts and earlier completed
-turns in the same conversation to the selected OpenAI or Anthropic API after
+turns in the same conversation to the selected model service after
 you submit a message. It also sends your configured chat instructions. The
 application keeps source paths and file names outside the request payload,
 unless you include them in the text. OpenAI requests disable response storage
 where supported by the Responses API. Provider privacy and billing terms apply.
+The Ollama option connects to the local daemon for downloaded models.
+
+The optional ChatGPT subscription connection opens OpenAI's authorization page
+in your system browser. When you authorize plan use, PDFreader requests the
+model list and sends eligible chat requests using your ChatGPT account.
+Windows Data Protection API protects the connection record and tokens under
+Local AppData in `local.pomelo.pdfreader/chatgpt-auth.dat`. Signing out from
+AI settings clears the local tokens and attempts to revoke the renewable session.
 
 By default, chat history is saved locally in `local-v1/chat.json` and includes
 submitted excerpts, responses and source references. Use a temporary session

@@ -22,7 +22,7 @@ fn read(path: &Path) -> Result<Record, String> {
     if record.version != 1 { return Err("本地数据版本不支持，未覆盖原文件".into()); }
     Ok(record)
 }
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temp = path.with_extension(format!("{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let result = (|| -> std::io::Result<()> {
         let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
@@ -39,7 +39,7 @@ fn write(path: &Path, expected: u64, data: Value) -> Result<Record, String> {
     if bytes.len() > 2 * 1024 * 1024 { return Err("本地数据达到 2 MiB 上限，请先导出并整理笔记；未删除已有内容".into()); }
     atomic_write(path, &bytes)?; Ok(record)
 }
-fn lock(path: &Path) -> Result<std::fs::File, String> {
+pub(crate) fn lock(path: &Path) -> Result<std::fs::File, String> {
     let mut options = OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
     #[cfg(windows)] { use std::os::windows::fs::OpenOptionsExt; options.share_mode(0); }
     options.open(path.with_extension("lock")).map_err(|_| "另一窗口正在读写本地数据，请稍后重试".into())

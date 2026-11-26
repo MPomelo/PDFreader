@@ -7,6 +7,8 @@ mod http;
 mod sse;
 mod translation;
 mod chat;
+mod chatgpt;
+mod chatgpt_oauth;
 mod local;
 mod launch;
 mod poppler;
@@ -99,6 +101,7 @@ fn main() {
     use tauri::{Emitter, Manager};
     tauri::Builder::default().manage(AllowedFiles::default()).manage(launch::IncomingPdfs::default())
         .manage(text::TextFiles::default()).manage(translation::ApiState::default()).manage(local::LocalState::default())
+        .manage(chatgpt::ChatGptState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             launch::enqueue(args, std::path::Path::new(&cwd), &app.state::<launch::IncomingPdfs>(), &app.state::<AllowedFiles>());
             let _ = app.emit("pdfs-queued", ());
@@ -117,7 +120,9 @@ fn main() {
             local::local_read, local::local_write, local::local_recover, local::reopen_pdf, local::reopen_workspace_document, local::export_notes, local::export_chat,
             translation::api_load, translation::api_save, translation::api_secret_status,
             translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel,
-            chat::chat_secret_status, chat::chat_secret_save, chat::chat_secret_delete, chat::chat_request])
+            chat::chat_secret_status, chat::chat_secret_save, chat::chat_secret_delete, chat::chat_ollama_models, chat::chat_request,
+            chatgpt::chatgpt_status, chatgpt::chatgpt_sign_in, chatgpt::chatgpt_cancel_sign_in, chatgpt::chatgpt_select_account,
+            chatgpt::chatgpt_sign_out, chatgpt::chatgpt_models, chatgpt::chatgpt_open_usage])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Always let the shell flush active text/ink before deciding.

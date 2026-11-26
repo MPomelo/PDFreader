@@ -1,17 +1,59 @@
-import { Add20Regular, Dismiss20Regular, DocumentPdf20Regular, DocumentText20Regular } from '@fluentui/react-icons';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { Add20Regular, Chat20Regular, ChevronDown20Regular, Dismiss20Regular, DocumentPdf20Regular, DocumentText20Regular, MoreHorizontal20Regular, Translate20Regular } from '@fluentui/react-icons';
 import { columns, columnName, type Column } from './layout';
 
 export type HeaderTab = { id: string; kind: string; name: string; path?: string; dirty?: boolean };
 const dragType = 'application/x-pdfreader-tab';
 
-export function WorkspaceTabs({ column, tabs, selected, busy, onSelect, onClose, onMove, onOpen, onNew, onCollapse, onMaximize, maximized, onReset }: {
-  column: Column; tabs: HeaderTab[]; selected: string; busy: boolean; maximized: boolean;
+export function WorkspaceTabs({ column, tabs, selected, busy, onSelect, onClose, onMove, onOpen, onNew, onCollapse, onMaximize, maximized, onReset, actions }: {
+  column: Column; tabs: HeaderTab[]; selected: string; busy: boolean; maximized: boolean; actions?: ReactNode;
   onSelect: (id: string) => void; onClose: (id: string) => void;
   onMove: (id: string, column: Column, before?: string) => void;
   onOpen: () => void; onNew: (kind: 'markdown' | 'txt' | 'translation' | 'chat') => void;
   onCollapse?: () => void; onMaximize: () => void; onReset: () => void;
 }) {
-  return <div className="column-tabs" onDragOver={event => {
+  const compact = column !== 'upper';
+  const addMenuId = useId();
+  const addButton = useRef<HTMLButtonElement>(null);
+  const addMenu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const button = addButton.current!;
+    const menu = addMenu.current!;
+    const columnHeader = button.closest('.column-tabs')!;
+    const grid = button.closest('.workspace-grid')!;
+    const gap = 4;
+    function placeMenu() {
+      if (!menu.matches(':popover-open')) {
+        delete menu.dataset.positioned;
+        return;
+      }
+      const anchor = button.getBoundingClientRect();
+      const pane = columnHeader.getBoundingClientRect();
+      const workspace = grid.getBoundingClientRect();
+      const left = pane.left + gap;
+      const right = pane.right - gap;
+      menu.style.maxWidth = Math.max(0, right - left) + 'px';
+      menu.style.left = Math.max(left, Math.min(anchor.left, right - menu.getBoundingClientRect().width)) + 'px';
+
+      const below = workspace.bottom - anchor.bottom - 2 * gap;
+      const above = anchor.top - workspace.top - 2 * gap;
+      const height = menu.scrollHeight + menu.offsetHeight - menu.clientHeight;
+      const openAbove = below < height && above > below;
+      menu.style.maxHeight = Math.max(0, Math.min(420, openAbove ? above : below)) + 'px';
+      menu.style.top = (openAbove ? anchor.top - gap - menu.offsetHeight : anchor.bottom + gap) + 'px';
+      menu.dataset.positioned = '';
+    }
+    const resize = new ResizeObserver(placeMenu);
+    for (const element of [button, menu, columnHeader, grid]) resize.observe(element);
+    menu.addEventListener('toggle', placeMenu);
+    window.addEventListener('resize', placeMenu);
+    return () => {
+      menu.removeEventListener('toggle', placeMenu);
+      window.removeEventListener('resize', placeMenu);
+      resize.disconnect();
+    };
+  }, []);
+  return <div className="column-tabs" data-compact={compact} onDragOver={event => {
     if (event.dataTransfer.types.includes(dragType)) event.preventDefault();
   }} onDrop={event => {
     const id = event.dataTransfer.getData(dragType);
@@ -31,31 +73,40 @@ export function WorkspaceTabs({ column, tabs, selected, busy, onSelect, onClose,
             if (!next) return;
             event.preventDefault(); onSelect(next.id); document.getElementById('document-tab-' + next.id)?.focus();
           }}>
-          {tab.kind === 'pdf' ? <DocumentPdf20Regular /> : <DocumentText20Regular />}
+          {tab.kind === 'translation' ? <Translate20Regular /> : tab.kind === 'chat' ? <Chat20Regular />
+            : tab.kind === 'pdf' ? <DocumentPdf20Regular /> : <DocumentText20Regular />}
           <span>{tab.name}</span>{tab.dirty && <span className="dirty-dot" aria-label={tab.kind === 'pdf' ? '有未导出修改' : '有未保存修改'} />}
         </button>
         <button className="close-document" aria-label={'关闭 ' + tab.name} title={'关闭 ' + tab.name} disabled={busy} onClick={() => onClose(tab.id)}><Dismiss20Regular /></button>
       </div>)}
     </div>
-    {selected && <details className="toolbar-menu workspace-tab-menu">
-      <summary role="button" aria-label={columnName[column] + '标签操作'} title={columnName[column] + '标签操作'}>⋯</summary>
-      <div className="command-menu">
-        {columns.filter(target => target !== column).map(target => <button key={target} disabled={busy} onClick={() => onMove(selected, target)}>移到{columnName[target]}</button>)}
-        <button onClick={onMaximize}>{maximized ? '恢复三栏布局' : '最大化' + columnName[column]}</button>
-        {onCollapse && <button onClick={onCollapse}>收起{columnName[column]}</button>}
-        <button onClick={onReset}>恢复默认比例</button>
-      </div>
-    </details>}
-    <details className="toolbar-menu new-document">
-      <summary role="button" aria-label={column === 'upper' ? '新建或打开文档' : columnName[column] + '新建或打开文档'}><Add20Regular /></summary>
-      <div className="command-menu" onClick={event => { if ((event.target as Element).closest('button')) event.currentTarget.parentElement?.removeAttribute('open'); }}>
+    <div className="toolbar-menu new-document">
+      <button type="button" ref={addButton} popoverTarget={addMenuId}
+        aria-label={column === 'upper' ? '新建或打开文档' : columnName[column] + '新建或打开文档'}><Add20Regular /></button>
+      <div id={addMenuId} ref={addMenu} className="command-menu new-document-menu" popover="auto" onClick={event => {
+        if ((event.target as Element).closest('button') && event.currentTarget.matches(':popover-open')) event.currentTarget.hidePopover();
+      }}>
         <button disabled={busy} onClick={onOpen}>打开文档</button>
         <button disabled={busy} onClick={() => onNew('markdown')}>新建 Markdown</button>
         <button disabled={busy} onClick={() => onNew('txt')}>新建 TXT</button>
         <button disabled={busy} onClick={() => onNew('translation')}>新建译文</button>
         <button disabled={busy} onClick={() => onNew('chat')}>新建 AI 对话</button>
       </div>
-    </details>
+    </div>
+    <div className="column-header-actions">
+      {actions}
+      {selected && <details className="toolbar-menu workspace-tab-menu">
+        <summary role="button" aria-label={columnName[column] + '标签操作'} title={columnName[column] + '标签操作'}><MoreHorizontal20Regular /></summary>
+        <div className="command-menu" onClick={event => {
+          if ((event.target as Element).closest('button')) event.currentTarget.parentElement?.removeAttribute('open');
+        }}>
+          {columns.filter(target => target !== column).map(target => <button key={target} disabled={busy} onClick={() => onMove(selected, target)}>移到{columnName[target]}</button>)}
+          <button onClick={onMaximize}>{maximized ? '恢复三栏布局' : '最大化' + columnName[column]}</button>
+          <button onClick={onReset}>恢复默认比例</button>
+        </div>
+      </details>}
+      {onCollapse && <button type="button" aria-label={'收起' + columnName[column]} title={'收起' + columnName[column]} onClick={onCollapse}><ChevronDown20Regular /></button>}
+    </div>
   </div>;
 }
 
