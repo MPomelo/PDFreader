@@ -134,8 +134,10 @@ try {
   await page.mouse.up();
   await expect(content).toBeFocused();
   await expect(box).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(textSettings).toHaveAttribute('data-text-target', /.+/);
   await textSettings.getByRole('spinbutton', { name: '字号' }).fill('12');
   await textSettings.getByRole('spinbutton', { name: '字号' }).press('Enter');
+  await expect.poll(() => content.evaluate(element => element.style.fontSize)).toContain('12px');
   await expect(content).toHaveAttribute('contenteditable', 'true');
   await textSettings.getByLabel('文字色').fill('#254877');
   await expect(content).toHaveCSS('color', 'rgb(37, 72, 119)');

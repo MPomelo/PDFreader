@@ -83,7 +83,10 @@ function finishTextBox() {
 }
 app.eventBus.on('annotationeditorparamschanged', () => {
   updateTextSize();
-  if (textBoxStyle()) scheduleObserve();
+  if (textBoxStyle()) {
+    publish();
+    scheduleObserve();
+  }
 });
 app.eventBus.on('annotationeditormodechanged', ({ mode }) => {
   if (mode !== AnnotationEditorType.FREETEXT && editorManager()) editorManager().pdfreaderTextPlacement = false;
@@ -486,6 +489,9 @@ for (const event of ['pointerdown', 'focusin']) {
     if (hostToolbar && activeDocument) post({ type: 'focus' });
   }, true);
 }
+document.addEventListener('focusin', event => {
+  if (event.target instanceof Element && event.target.closest('.pdfreader-text-box') && textBoxStyle()) publish();
+});
 // Route shell shortcuts from inside the embedded Viewer, including editing focus.
 window.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();

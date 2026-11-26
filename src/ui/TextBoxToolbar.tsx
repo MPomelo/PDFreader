@@ -13,26 +13,26 @@ type Props = {
 export function TextBoxToolbar({ value, busy, onChange, onDone }: Props) {
   const [size, setSize] = useState(String(value.size));
   useEffect(() => setSize(String(value.size)), [value.size, value.target]);
-  function commitSize() {
-    const number = Number(size);
-    if (!size || !Number.isInteger(number) || number < 5 || number > 100) setSize(String(value.size));
+  function commitSize(input: string) {
+    const number = Number(input);
+    if (!input || !Number.isInteger(number) || number < 5 || number > 100) setSize(String(value.size));
     else if (number !== value.size) onChange({ property: 'size', value: number });
   }
-  return <div className="textbox-toolbar" role="group" aria-label="文本框设置" data-pdfreader-text-toolbar onKeyDown={event => {
+  return <div className="textbox-toolbar" role="group" aria-label="文本框设置" data-pdfreader-text-toolbar data-text-target={value.target || undefined} onKeyDown={event => {
     if (event.nativeEvent.isComposing || event.keyCode === 229 || busy) return;
     if (event.key === 'Escape' || event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
       event.preventDefault();
-      if (event.target instanceof HTMLInputElement && event.target.type === 'number') commitSize();
+      if (event.target instanceof HTMLInputElement && event.target.type === 'number') commitSize(event.target.value);
       onDone();
     }
   }}>
     <label>字号
       <input type="number" aria-label="字号" min="5" max="100" step="1" value={size} disabled={busy}
-        onChange={event => setSize(event.target.value)} onBlur={commitSize}
+        onChange={event => setSize(event.target.value)} onBlur={event => commitSize(event.currentTarget.value)}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            commitSize();
+            commitSize(event.currentTarget.value);
           }
         }} />
       <span aria-hidden="true">pt</span>
