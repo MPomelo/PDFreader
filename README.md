@@ -35,6 +35,8 @@ A local Windows workspace for reading and annotating PDFs, writing Markdown note
 4. 需要翻译时，在“设置 → 翻译配置”配置服务和密钥，保存后选择文字，按 Ctrl+Shift+Enter。
 5. 需要使用 ChatGPT 订阅对话时，进入「设置 → AI设置 → 模型服务」，选择「ChatGPT 订阅」并登录授权。
 
+带更新功能的 2.2.2 安装包为 `PDFreader_2.2.2_x64-updater-setup.exe`，校验文件为 `SHA256SUMS-updater.txt`。安装后在「设置 → 应用更新」检查新版本。
+
 安装包目前未做代码签名，Windows 可能显示未知发布者提示。只在确认下载来源与校验和后继续。翻译使用你配置的外部 API，费用与隐私规则由对应服务决定；自动翻译每次启动默认关闭。
 
 | 快捷键 | 操作 |

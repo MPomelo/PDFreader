@@ -14,6 +14,7 @@ mod local;
 mod launch;
 mod poppler;
 mod text;
+mod update;
 
 #[derive(Default)]
 struct AllowedFiles(Mutex<HashSet<PathBuf>>);
@@ -103,6 +104,7 @@ fn main() {
     tauri::Builder::default().manage(AllowedFiles::default()).manage(launch::IncomingPdfs::default())
         .manage(text::TextFiles::default()).manage(translation::ApiState::default()).manage(local::LocalState::default())
         .manage(chatgpt::ChatGptState::default())
+        .manage(update::UpdateState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             launch::enqueue(args, std::path::Path::new(&cwd), &app.state::<launch::IncomingPdfs>(), &app.state::<AllowedFiles>());
             let _ = app.emit("pdfs-queued", ());
@@ -113,6 +115,7 @@ fn main() {
         .setup(|app| {
             let cwd = std::env::current_dir()?;
             launch::enqueue(std::env::args(), &cwd, &app.state::<launch::IncomingPdfs>(), &app.state::<AllowedFiles>());
+            update::clean_cache(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![choose_pdf, choose_documents, startup_pdf, launch::startup_pdfs, read_pdf, export_pdf, finish_close,
@@ -125,7 +128,8 @@ fn main() {
             chat_api::chat_api_profiles, chat_api::chat_api_save_profile, chat_api::chat_api_delete_profile,
             chat_api::chat_api_secret_status, chat_api::chat_api_secret_save, chat_api::chat_api_secret_delete, chat_api::chat_api_models,
             chatgpt::chatgpt_status, chatgpt::chatgpt_sign_in, chatgpt::chatgpt_cancel_sign_in, chatgpt::chatgpt_select_account,
-            chatgpt::chatgpt_sign_out, chatgpt::chatgpt_models, chatgpt::chatgpt_open_usage])
+            chatgpt::chatgpt_sign_out, chatgpt::chatgpt_models, chatgpt::chatgpt_open_usage,
+            update::update_status, update::update_check, update::update_download, update::update_cancel_download, update::update_install])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Always let the shell flush active text/ink before deciding.

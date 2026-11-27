@@ -482,8 +482,20 @@ function App() {
       setAnnotationTab(previous => previous === id ? '' : previous);
       updateTabs(items=>items.filter(item=>item.id!==id));updateWorkspace(remove(workspaceRef.current,id)); });
   }
-  async function closeWindow() {
-    await runOperation('closing', async () => { const initialWorkspace = workspaceRef.current; for(const tab of [...tabsRef.current]) {if(!await mayClose(tab))return;await persist(tabsRef.current.find(item=>item.id===tab.id)||tab).catch(()=>{});}await Promise.all([...chatStops.current.values()].map(stop => stop()));await repository.saveLayout(layoutRef.current).catch(()=>{});if(layoutReady&&!preserveLayout.current)await repository.saveWorkspace(workspaceSnapshot(initialWorkspace)).catch(()=>{});await repository.flush();await invoke('finish_close'); });
+  async function closeWindow(installUpdate = false) {
+    return runOperation('closing', async () => {
+      const initialWorkspace = workspaceRef.current;
+      for (const tab of [...tabsRef.current]) {
+        if (!await mayClose(tab)) return;
+        await persist(tabsRef.current.find(item => item.id === tab.id) || tab).catch(() => {});
+      }
+      await Promise.all([...chatStops.current.values()].map(stop => stop()));
+      await repository.saveLayout(layoutRef.current).catch(() => {});
+      if (layoutReady && !preserveLayout.current) await repository.saveWorkspace(workspaceSnapshot(initialWorkspace)).catch(() => {});
+      await repository.flush();
+      if (installUpdate) return invoke<void>('update_install').catch(error => String(error));
+      await invoke('finish_close');
+    });
   }
   async function action(action: ReaderAction, id = activeRef.current) { const pane=panes.current.get(id);if(action==='thumbnails')setLeft(false);try{await pane?.action(action);}catch(error){setError(String(error));} }
   async function position(id: string, page: number, zoom?: string) { const tab=tabsRef.current.find(tab=>tab.id===id);if(tab?.kind!=='pdf'||!tab.state)return;try{await panes.current.get(tab.id)?.restore(page,zoom||tab.state.zoom);}catch(error){setError(String(error));} }
@@ -897,7 +909,9 @@ function App() {
       </section>
     </main>
     <footer><span>{tabs.length?`${tabs.length} 个文档`:'就绪'}{reader&&(reader.dirty||pendingNote(activeId))?' · 有未导出批注':text&&textDirty(text)?' · 有未保存修改':''}</span><span>{reader?`第 ${reader.page} / ${reader.pages} 页`:text?`第 ${text.position.line} 行，第 ${text.position.column} 列 · ${text.encoding}${text.bom?' BOM':''} · ${text.eol==='\r\n'?'CRLF':text.eol==='\r'?'CR':'LF'}`:active?.name||'PDFreader'}</span></footer>
-    <SettingsDialog onClearChat={() => { void clearChatHistory().catch(error => setError(String(error))); }} open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.kind==='pdf'?active.fingerprint:''} />
+    <SettingsDialog onClearChat={() => { void clearChatHistory().catch(error => setError(String(error))); }}
+      onInstallUpdate={() => closeWindow(true)} installUpdateDisabled={!!operation || !layoutReady}
+      open={settingsOpen} initialSection={settingsSection} onClose={()=>setSettingsOpen(false)} theme={theme} onTheme={setTheme} accent={accent} onAccent={setAccent} preferences={preferences} onPreferences={value=>{void changePreferences(value);}} automatic={automatic} onAutomatic={setAutomatic} documentKey={active?.kind==='pdf'?active.fingerprint:''} />
     {citationTab && citationAdapter && <CitationDialog key={citationTab.id} documentName={citationTab.name} adapter={citationAdapter} onClose={() => setCitationId('')} />}
     {encodingFile && <EncodingDialog name={encodingFile} error={encodingError} onAnswer={answerEncoding} />}
     <dialog ref={translationDialog} className="unsaved-dialog translation-conflict" aria-labelledby="translation-conflict-title"

@@ -5,8 +5,11 @@
 - AI 对话新增第三方 OpenAI 兼容 API。可保存和切换多套配置，分别设置 API 地址、密钥、模型和流式输出。
 - 提供 DeepSeek、通义千问、Kimi、智谱 GLM、小米 MiMo、Gemini 和 OpenRouter 模板，也可使用自定义兼容地址。服务支持时可读取模型列表。
 - 设置入口改为「翻译配置」与「AI设置」。两处服务和密钥独立保存。
+- 带更新功能的 2.2.2 安装包在「设置 → 应用更新」检查 GitHub Releases，下载更新并校验 SHA-256。确认安装前，应用会提示处理尚未保存的文档。
 
 下载 [Windows x64 安装包](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.2)，可用同页的 `SHA256SUMS.txt` 核对。安装包未签名。
+
+已安装早期 2.2.2 的用户可以手动运行同一发布页的 `PDFreader_2.2.2_x64-updater-setup.exe`，用 `SHA256SUMS-updater.txt` 核对。之后可从应用内检查更新。
 
 第三方 API 的配置切换和问答使用测试数据验证，尚未使用真实账户密钥逐项验证。
 

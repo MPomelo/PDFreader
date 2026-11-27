@@ -38,6 +38,9 @@ jobs:
       - run: npm run test:annotation-workspace
       - run: npm run test:workspace-browser
       - run: npm run test:native
+      - name: Verify in-app update download against GitHub
+        timeout-minutes: 4
+        run: cargo test --locked --release --manifest-path src-tauri/Cargo.toml update::tests::public_release_download_matches_github_digest -- --ignored
       - run: node scripts/collect-runtime-licenses.mjs
       - run: node scripts/collect-rust-licenses.mjs
       - run: npm run desktop:bundle

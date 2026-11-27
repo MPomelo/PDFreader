@@ -55,21 +55,36 @@ fn wait(receiver: &mpsc::Receiver<Event>, expected: u32, cancel: &AtomicBool, de
     }
 }
 pub fn request(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration) -> Result<Response, String> {
-    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "application/json"), None)
+    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "application/json"), None, None).map(|(response, _)| response)
 }
 pub fn request_form(url: &url::Url, body: Vec<u8>, cancel: &AtomicBool, timeout: Duration) -> Result<Response, String> {
-    request_with(url, "none", None, Some(body), cancel, timeout, ("application/x-www-form-urlencoded", "application/json"), None)
+    request_with(url, "none", None, Some(body), cancel, timeout, ("application/x-www-form-urlencoded", "application/json"), None, None).map(|(response, _)| response)
 }
 pub fn request_stream(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration,
     chunk: &mut dyn FnMut(&[u8]) -> Result<bool, String>) -> Result<Response, String> {
-    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "text/event-stream"), Some(chunk))
+    request_with(url, auth, secret, body, cancel, timeout, ("application/json", "text/event-stream"), Some(chunk), None).map(|(response, _)| response)
 }
 pub fn request_ndjson(url: &url::Url, body: Vec<u8>, cancel: &AtomicBool, timeout: Duration,
     chunk: &mut dyn FnMut(&[u8]) -> Result<bool, String>) -> Result<Response, String> {
-    request_with(url, "none", None, Some(body), cancel, timeout, ("application/json", "application/x-ndjson"), Some(chunk))
+    request_with(url, "none", None, Some(body), cancel, timeout, ("application/json", "application/x-ndjson"), Some(chunk), None).map(|(response, _)| response)
+}
+pub fn download(url: &url::Url, limit: usize, cancel: &AtomicBool, timeout: Duration,
+    chunk: &mut dyn FnMut(&[u8]) -> Result<bool, String>) -> Result<(u32, Option<String>), String> {
+    request_with(url, "none", None, None, cancel, timeout, ("application/octet-stream", "application/octet-stream"),
+        Some(chunk), Some(limit)).map(|(response, redirect)| (response.status, redirect))
+}
+fn location(request: &Handle) -> Result<String, String> {
+    let mut buffer = vec![0u16; 8192];
+    let mut size = (buffer.len() * std::mem::size_of::<u16>()) as u32;
+    let found = unsafe { WinHttpQueryHeaders(request.0, WINHTTP_QUERY_LOCATION, std::ptr::null(), buffer.as_mut_ptr().cast(),
+        &mut size, std::ptr::null_mut()) };
+    if found == 0 { return Err("安装包下载缺少有效的重定向地址。".into()); }
+    String::from_utf16(&buffer[..buffer.iter().position(|&unit| unit == 0).unwrap_or(buffer.len())])
+        .map_err(|_| "安装包下载地址编码无效。".into())
 }
 fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Option<Vec<u8>>, cancel: &AtomicBool, timeout: Duration,
-    (content_type, accept): (&str, &str), mut chunk_handler: Option<&mut dyn FnMut(&[u8]) -> Result<bool, String>>) -> Result<Response, String> {
+    (content_type, accept): (&str, &str), mut chunk_handler: Option<&mut dyn FnMut(&[u8]) -> Result<bool, String>>,
+    download_limit: Option<usize>) -> Result<(Response, Option<String>), String> {
     if cancel.load(Ordering::SeqCst) { return Err("已取消请求。".into()); }
     let deadline = Instant::now() + timeout;
     let (sender, receiver) = mpsc::channel();
@@ -80,7 +95,8 @@ fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Optio
         ok(WinHttpSetTimeouts(session.0, 15000, 15000, 30000, timeout.as_millis().min(i32::MAX as u128) as i32))?;
         let connection = handle(WinHttpConnect(session.0, wide(url.host_str().ok_or("地址缺少主机")?).as_ptr(), url.port_or_known_default().ok_or("地址端口无效")?, 0))?;
         let method = if context.body.is_empty() { "GET" } else { "POST" };
-        let request = handle(WinHttpOpenRequest(connection.0, wide(method).as_ptr(), wide(url.path()).as_ptr(), std::ptr::null(), std::ptr::null(), std::ptr::null(), if url.scheme() == "https" { WINHTTP_FLAG_SECURE } else { 0 }))?;
+        let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
+        let request = handle(WinHttpOpenRequest(connection.0, wide(method).as_ptr(), wide(target).as_ptr(), std::ptr::null(), std::ptr::null(), std::ptr::null(), if url.scheme() == "https" { WINHTTP_FLAG_SECURE } else { 0 }))?;
         // Never forward credentials through redirects or silently replay a POST.
         let policy: u32 = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
         ok(WinHttpSetOption(request.0, WINHTTP_OPTION_REDIRECT_POLICY, (&policy as *const u32).cast(), 4))?;
@@ -111,18 +127,24 @@ fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Optio
         wait(&receiver, WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE, cancel, deadline)?;
         let mut status = 0u32; let mut len = 4u32;
         ok(WinHttpQueryHeaders(request.0, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, std::ptr::null(), (&mut status as *mut u32).cast(), &mut len, std::ptr::null_mut()))?;
+        if download_limit.is_some() && status != 200 {
+            let redirect = if matches!(status, 301 | 302 | 303 | 307 | 308) { Some(location(&request)?) } else { None };
+            return Ok((Response { status, body: Vec::new() }, redirect));
+        }
         let mut bytes = Vec::new(); let mut received = 0usize;
         loop {
             ok(WinHttpReadData(request.0, context.buffer.get().cast(), 8192, std::ptr::null_mut()))?;
             let chunk = wait(&receiver, WINHTTP_CALLBACK_STATUS_READ_COMPLETE, cancel, deadline)?;
             if chunk.is_empty() { break; }
             received += chunk.len();
-            if received > MAX_RESPONSE { return Err("响应超过 2 MiB 限制；请缩短选区。".into()); }
+            if received > download_limit.unwrap_or(MAX_RESPONSE) {
+                return Err(if download_limit.is_some() { "安装包大小超出发布记录。" } else { "响应超过 2 MiB 限制；请缩短选区。" }.into());
+            }
             if (200..300).contains(&status) && chunk_handler.is_some() {
                 if chunk_handler.as_mut().unwrap()(&chunk)? { break; }
             } else { bytes.extend_from_slice(&chunk); }
         }
-        Ok(Response { status, body: bytes })
+        Ok((Response { status, body: bytes }, None))
     }
 }
 

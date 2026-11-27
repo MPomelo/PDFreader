@@ -27,6 +27,8 @@ try {
     window.qa = { open: [pdfPath], requests: [], cancels: [], writes: [], translations: [] };
     window.qa.chatgpt = { activeId: null, accounts: [], signingIn: false };
     window.qa.chatApiProfiles = [];
+    window.qa.updateInstalls = 0;
+    const update = { currentVersion: '2.2.2', available: null, downloaded: false, busy: false, downloading: false };
     const apiKeys = new Set();
     const routeError = '此 API 配置的地址或鉴权方式已变更。请确认后重新发送。';
     const apiProfile = (id, route) => {
@@ -43,6 +45,19 @@ try {
         switch (command) {
           case 'plugin:event|listen': return args.handler;
           case 'plugin:window|is_maximized': return false;
+          case 'update_status': return structuredClone(update);
+          case 'update_check': {
+            update.available = args.includePrerelease ? { version: '2.2.3', prerelease: true, size: 12_000_000 } : null;
+            return structuredClone(update);
+          }
+          case 'update_download': {
+            const send = callbacks.get(args.onProgress.id);
+            send({ index: 0, message: { downloaded: 6_000_000, total: 12_000_000 } });
+            send({ index: 1, end: true });
+            update.downloaded = true;
+            return structuredClone(update);
+          }
+          case 'update_install': window.qa.updateInstalls++; return;
           case 'startup_pdfs': return { paths: [], errors: [] };
           case 'choose_documents': return window.qa.open;
           case 'reopen_workspace_document': return args.path;
@@ -485,6 +500,31 @@ try {
   await button('发送').click();
   await expect(page.getByRole('log')).toContainText('Non-streaming answer');
   await expect(page.getByRole('log')).toContainText('本机兼容 API · fixture-local');
+
+  await tab('notes.txt').click();
+  await txt.fill('通过更新前的未保存内容');
+  await button('设置').click();
+  await button('应用更新', chatSettings).click();
+  await expect(chatSettings.getByText('当前版本 2.2.2')).toBeVisible();
+  const includePrerelease = chatSettings.getByRole('checkbox', { name: '包括预发行版' });
+  await includePrerelease.uncheck();
+  await button('检查更新', chatSettings).click();
+  await expect(chatSettings.getByRole('status')).toContainText('没有可用的正式版更新');
+  await includePrerelease.check();
+  await button('检查更新', chatSettings).click();
+  await expect(chatSettings.getByText('2.2.3', { exact: true })).toBeVisible();
+  await button('下载更新', chatSettings).click();
+  await expect(chatSettings.getByText(/安装包已通过 SHA-256 校验/)).toBeVisible();
+  await button('退出并安装', chatSettings).click();
+  const pendingDocument = page.getByRole('dialog', { name: '有尚未保存的修改' });
+  await expect(pendingDocument).toBeVisible();
+  await button('取消', pendingDocument).click();
+  await expect(button('退出并安装', chatSettings)).toBeEnabled();
+  assert.equal(await page.evaluate(() => window.qa.updateInstalls), 0);
+  assert.equal(await txt.innerText(), '通过更新前的未保存内容');
+  await button('退出并安装', chatSettings).click();
+  await button('放弃修改', pendingDocument).click();
+  await expect.poll(() => page.evaluate(() => window.qa.updateInstalls)).toBe(1);
   assert.deepEqual(errors, []);
   console.log('Three-column workspace and AI browser regressions passed.');
 } finally {
