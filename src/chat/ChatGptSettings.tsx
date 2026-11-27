@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import {
-  activeAccount, CHATGPT_SESSION_CHANGED, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel,
+  activeAccount, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel,
   type ChatGptCatalog, type ChatGptSignIn, type ChatGptSignOut, type ChatGptStatus,
 } from './chatgpt';
+import { APP_EVENTS, emitAppEvent, onAppEvent } from '../local/events';
 
 export function ChatGptSettings({ model, onModel }: { model: string; onModel: (model: string) => void }) {
   const [status, setStatus] = useState<ChatGptStatus | null>(null);
@@ -31,8 +32,8 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
       }).catch(error => { if (current && request === attempt) setNotice(String(error)); });
     };
     read();
-    window.addEventListener(CHATGPT_SESSION_CHANGED, read);
-    return () => { current = false; window.removeEventListener(CHATGPT_SESSION_CHANGED, read); };
+    const stopListening = onAppEvent(APP_EVENTS.chatgptSessionChanged, read);
+    return () => { current = false; stopListening(); };
   }, []);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
     finally {
       setWorking(false);
       setStatus(previous => previous && { ...previous, signingIn: false });
-      window.dispatchEvent(new Event(CHATGPT_SESSION_CHANGED));
+      emitAppEvent(APP_EVENTS.chatgptSessionChanged);
     }
   }
 
@@ -73,7 +74,7 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
     try {
       const value = await invoke<ChatGptStatus>('chatgpt_select_account', { accountId: id });
       setStatus(value);
-      window.dispatchEvent(new Event(CHATGPT_SESSION_CHANGED));
+      emitAppEvent(APP_EVENTS.chatgptSessionChanged);
     } catch (error) { setNotice(String(error)); }
     finally { setWorking(false); }
   }
@@ -85,7 +86,7 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
       const result = await invoke<ChatGptSignOut>('chatgpt_sign_out', { accountId });
       setStatus(result.status);
       setNotice(result.revoked ? '已退出此 ChatGPT 账户。' : '已在本机退出。OpenAI 尚未确认撤销，请在 ChatGPT 设置的登录连接中检查。');
-      window.dispatchEvent(new Event(CHATGPT_SESSION_CHANGED));
+      emitAppEvent(APP_EVENTS.chatgptSessionChanged);
     } catch (error) { setNotice(String(error)); }
     finally { setWorking(false); }
   }
@@ -104,11 +105,11 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
     </label>}
     {account?.connected && <p className="muted">{available ? '已授权使用 ChatGPT 订阅' : '已登录，等待订阅授权'}</p>}
     <div className="chat-settings-actions">
-      {signingIn ? <button type="button" onClick={() => { void invoke('chatgpt_cancel_sign_in').catch(error => setNotice(String(error))); }}>取消 ChatGPT 登录</button>
+      {signingIn ? <button type="button" className="btn-secondary" onClick={() => { void invoke('chatgpt_cancel_sign_in').catch(error => setNotice(String(error))); }}>取消 ChatGPT 登录</button>
         : !account?.connected ? <button type="button" className="chatgpt-login" disabled={!status || waiting} onClick={() => { void signIn(accountId ?? null); }}>使用 ChatGPT 登录</button>
-        : <button type="button" disabled={waiting} onClick={() => { void signIn(accountId ?? null, !available); }}>{available ? '重新授权' : '授权使用 ChatGPT 订阅'}</button>}
-      {status?.accounts.length && !signingIn ? <button type="button" disabled={waiting} onClick={() => { void signIn(null); }}>添加 ChatGPT 账户</button> : null}
-      {account?.connected && <button type="button" disabled={waiting} onClick={() => { void signOut(); }}>退出账户</button>}
+        : <button type="button" className="btn-secondary" disabled={waiting} onClick={() => { void signIn(accountId ?? null, !available); }}>{available ? '重新授权' : '授权使用 ChatGPT 订阅'}</button>}
+      {status?.accounts.length && !signingIn ? <button type="button" className="btn-secondary" disabled={waiting} onClick={() => { void signIn(null); }}>添加 ChatGPT 账户</button> : null}
+      {account?.connected && <button type="button" className="btn-danger" disabled={waiting} onClick={() => { void signOut(); }}>退出账户</button>}
     </div>
     {available && <>
       <label className="field">ChatGPT 模型
@@ -118,8 +119,8 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
         </select>
       </label>
       <div className="chat-settings-actions">
-        <button type="button" disabled={loadingModels || waiting} onClick={() => { setNotice(''); setReload(value => value + 1); }}>刷新模型列表</button>
-        <button type="button" onClick={usage}>管理 ChatGPT 用量</button>
+        <button type="button" className="btn-secondary" disabled={loadingModels || waiting} onClick={() => { setNotice(''); setReload(value => value + 1); }}>刷新模型列表</button>
+        <button type="button" className="btn-secondary" onClick={usage}>管理 ChatGPT 用量</button>
       </div>
     </>}
     {notice && <p role="status">{notice}</p>}
@@ -127,8 +128,8 @@ export function ChatGptSettings({ model, onModel }: { model: string; onModel: (m
       <h3>ChatGPT 订阅已连接</h3>
       <p>选用「ChatGPT 订阅」时，合资格的对话会使用你的 ChatGPT 订阅额度。</p>
       <div className="chat-settings-actions">
-        <button type="button" onClick={usage}>管理 ChatGPT 用量</button>
-        <button type="button" className="primary" onClick={() => welcome.current?.close()}>知道了</button>
+        <button type="button" className="btn-secondary" onClick={usage}>管理 ChatGPT 用量</button>
+        <button type="button" className="btn-primary" onClick={() => welcome.current?.close()}>知道了</button>
       </div>
     </dialog>
   </div>;

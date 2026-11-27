@@ -2510,7 +2510,7 @@ dependencies = [
 
 [[package]]
 name = "pdfreader"
-version = "2.2.3"
+version = "2.2.4"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",

@@ -71,10 +71,10 @@ export function UpdatePanel({ onInstall, installDisabled, unsavedSettings }: {
     <label className="checkbox"><input type="checkbox" checked={prerelease} disabled={busy}
       onChange={event => { setPrerelease(event.target.checked); setMessage(''); }} />包括预发行版</label>
     <div className="panel-actions">
-      <button type="button" className={selected ? undefined : 'primary'} disabled={busy} onClick={() => { void perform('check'); }}>检查更新</button>
-      {selected && !status?.downloaded && !downloading && <button type="button" className="primary" disabled={busy}
+      <button type="button" className={selected ? 'btn-secondary' : 'btn-primary'} disabled={busy} onClick={() => { void perform('check'); }}>检查更新</button>
+      {selected && !status?.downloaded && !downloading && <button type="button" className="btn-primary" disabled={busy}
         onClick={() => { void perform('download'); }}>下载更新</button>}
-      {downloading && <button type="button" onClick={() => { void invoke('update_cancel_download').catch(error => setMessage(String(error))); }}>取消下载</button>}
+      {downloading && <button type="button" className="btn-secondary" onClick={() => { void invoke('update_cancel_download').catch(error => setMessage(String(error))); }}>取消下载</button>}
     </div>
     {selected && <p>可更新到 <strong>{selected.version}</strong>{selected.prerelease ? '（预发行版）' : ''} · {mib(selected.size)} MiB</p>}
     {downloading && <div className="field">
@@ -83,8 +83,8 @@ export function UpdatePanel({ onInstall, installDisabled, unsavedSettings }: {
     </div>}
     {selected && status?.downloaded && <>
       <p>安装包已通过 SHA-256 校验。退出前会检查尚未保存的文档，随后打开 Windows 安装程序。</p>
-      {unsavedSettings && <p className="muted">请先保存翻译设置。</p>}
-      <button type="button" className="primary" disabled={busy || installDisabled} onClick={() => { void perform('install'); }}>退出并安装</button>
+      {unsavedSettings && <p className="muted">请先保存未保存的设置更改。</p>}
+      <button type="button" className="btn-primary" disabled={busy || installDisabled} onClick={() => { void perform('install'); }}>退出并安装</button>
     </>}
     {work === 'check' && <p role="status">正在检查更新…</p>}
     {message && <p role="status">{message}</p>}

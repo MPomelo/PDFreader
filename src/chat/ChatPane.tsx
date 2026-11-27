@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
-import { Add16Regular, ChevronDown16Regular, ChevronLeft16Regular, Dismiss16Regular, History16Regular } from '@fluentui/react-icons';
-import { repository } from '../local/repository';
-import { MarkdownRenderer } from '../translation/MarkdownRenderer';
-import { CHAT_PREFERENCES_CHANGED } from './ChatSettings';
-import { chatApi, CHAT_API_PROFILES_CHANGED, type SavedApiProfile } from './chat-api';
 import {
-  activeAccount, CHATGPT_SESSION_CHANGED, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel, type ChatGptCatalog,
+  Add16Regular, ArrowClockwise16Regular, ArrowDownload16Regular, ChevronDown16Regular,
+  ChevronLeft16Regular, Copy16Regular, Delete16Regular, Dismiss16Regular, History16Regular,
+} from '@fluentui/react-icons';
+import { repository } from '../local/repository';
+import { APP_EVENTS, onAppEvent } from '../local/events';
+import { MarkdownRenderer } from '../translation/MarkdownRenderer';
+import { chatApi, type SavedApiProfile } from './chat-api';
+import {
+  activeAccount, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel, type ChatGptCatalog,
 } from './chatgpt';
 import { chatMessages, conversationName, defaultChat, materialMarker, providerName, providers, turnProviderName, type ChatCommand, type Conversation, type Material, type MaterialMode, type Provider, type Turn } from './model';
 import './chat.css';
@@ -62,6 +65,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<Conversation[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState('');
   const [ready, setReady] = useState(false);
   const [clearing, setClearing] = useState(false);
   const busy = turns.at(-1)?.state === 'streaming';
@@ -119,11 +123,11 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
         setApiProfileId(preferences.apiProfileId);
       }
     }).catch(() => {}); };
-    window.addEventListener(CHAT_PREFERENCES_CHANGED, refresh);
+    const stopPreferences = onAppEvent(APP_EVENTS.chatPreferencesChanged, refresh);
     return () => {
       alive.current = false;
       stopRegistration(id, null);
-      window.removeEventListener(CHAT_PREFERENCES_CHANGED, refresh);
+      stopPreferences();
       void stop.current();
     };
   }, [id]);
@@ -151,8 +155,8 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
     };
     void read();
     const refresh = () => { void read(); };
-    window.addEventListener(CHATGPT_SESSION_CHANGED, refresh);
-    return () => { current = false; window.removeEventListener(CHATGPT_SESSION_CHANGED, refresh); };
+    const stopSession = onAppEvent(APP_EVENTS.chatgptSessionChanged, refresh);
+    return () => { current = false; stopSession(); };
   }, [provider, visible]);
   useEffect(() => {
     if (provider !== 'compatible' || !visible || !isTauri()) return;
@@ -166,8 +170,8 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
         .catch(error => { if (current && request === generation) setApiError(String(error)); });
     };
     read();
-    window.addEventListener(CHAT_API_PROFILES_CHANGED, read);
-    return () => { current = false; window.removeEventListener(CHAT_API_PROFILES_CHANGED, read); };
+    const stopProfiles = onAppEvent(APP_EVENTS.chatApiProfilesChanged, read);
+    return () => { current = false; stopProfiles(); };
   }, [provider, visible]);
   useEffect(() => {
     if (clearedAt.current === clearRevision) return;
@@ -287,8 +291,11 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
     finally { setClearing(false); }
   }
   async function list() {
-    try { setHistory((await repository.chat()).conversations); setShowHistory(!showHistory); }
-    catch (error) { setMessage(String(error)); }
+    try {
+      setHistory((await repository.chat()).conversations);
+      setConfirmDeleteId('');
+      setShowHistory(!showHistory);
+    } catch (error) { setMessage(String(error)); }
   }
   async function exportMarkdown() {
     try {
@@ -304,20 +311,34 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
   }
   return <div className="chat-pane">
     <div className="chat-header">
-      <button aria-expanded={showHistory} onClick={() => { void list(); }}><History16Regular />对话历史</button>
+      <button type="button" aria-expanded={showHistory} onClick={() => { void list(); }}><History16Regular />对话历史</button>
       <label><input type="checkbox" checked={temporary} disabled={busy || clearing || !ready} onChange={event => { void toggleTemporary(event.target.checked); }} />临时会话</label>
-      <button className="chat-new" onClick={onNew}><Add16Regular />新对话</button>
+      <div className="chat-header-actions">
+        {turns.length > 0 && <button type="button" className="chat-export" title="导出 Markdown" onClick={() => { void exportMarkdown(); }}><ArrowDownload16Regular />导出 MD</button>}
+        <button type="button" className="chat-new" onClick={onNew}><Add16Regular />新对话</button>
+      </div>
     </div>
     {showHistory && <ul className="chat-history">
-      {history.length ? history.map(conversation => <li key={conversation.id}>
-        <button onClick={() => { onOpenHistory(conversation); setShowHistory(false); }}>{conversationName(conversation)}</button>
-        <button disabled={conversation.id === id && busy} onClick={() => {
-          void onDeleteHistory(conversation.id).then(() => {
-            setHistory(items => items.filter(item => item.id !== conversation.id));
-            if (conversation.id === id) update([]);
-          }).catch(error => setMessage(String(error)));
-        }}>删除 {conversationName(conversation)}</button>
-      </li>) : <li>暂无对话历史</li>}
+      {history.length ? history.map(conversation => {
+        const title = conversationName(conversation);
+        const confirming = confirmDeleteId === conversation.id;
+        return <li className="chat-history-item" key={conversation.id}>
+          <button type="button" className="chat-history-open" title={title} onClick={() => { onOpenHistory(conversation); setConfirmDeleteId(''); setShowHistory(false); }}>
+            <span>{title}</span>
+          </button>
+          {confirming ? <div className="chat-history-confirm">
+            <button type="button" className="btn-danger" disabled={conversation.id === id && busy} onClick={() => {
+              void onDeleteHistory(conversation.id).then(() => {
+                setConfirmDeleteId('');
+                setHistory(items => items.filter(item => item.id !== conversation.id));
+                if (conversation.id === id) update([]);
+              }).catch(error => setMessage(String(error)));
+            }}>确认删除</button>
+            <button type="button" className="btn-secondary" onClick={() => setConfirmDeleteId('')}>取消</button>
+          </div> : <button type="button" className="chat-history-delete" aria-label={`删除 ${title}`} title="删除对话" disabled={conversation.id === id && busy}
+            onClick={() => setConfirmDeleteId(conversation.id)}><Delete16Regular /></button>}
+        </li>;
+      }) : <li className="chat-history-empty">暂无对话历史</li>}
     </ul>}
     <div className="chat-messages" ref={log} role="log" aria-label="对话消息" aria-live={busy ? 'off' : 'polite'}
       onScroll={event => {
@@ -327,19 +348,22 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       {ready && !turns.length && <p className="chat-empty">输入 @ 添加打开的文档，输入 / 使用快捷命令。</p>}
       {turns.map((turn, index) => {
         const cited = citedMaterials(turn.text);
+        const canRetry = index === turns.length - 1 && ['failed', 'stopped'].includes(turn.state);
         return <article className="chat-turn" key={turn.id}>
           <p className="chat-question">{turn.prompt}</p>
           {turn.materials.map(item => <details key={item.id}><summary>{item.name}</summary><p className="selection">{item.text}</p></details>)}
           <div className="chat-model">{turnProviderName(turn)} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
           {turn.text && <MarkdownRenderer source={turn.text} pending={turn.state === 'streaming'} referenceMarkers={cited.map(materialMarker).join(' ')} />}
-          {cited.map((item, position) => <button className="chat-citation" key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>
+          {cited.map((item, position) => <button type="button" className="chat-citation" key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>
             <span aria-hidden="true">[{position + 1}]</span> 定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
           {turn.usage && <p className="chat-model">输入 {turn.usage.input_tokens ?? '—'} · 输出 {turn.usage.output_tokens ?? '—'} tokens</p>}
-          {turn.error && <p role="alert">{turn.error}</p>}
-          {turn.text && <button onClick={() => { void navigator.clipboard.writeText(turn.text).catch(error => setMessage(String(error))); }}>复制回复</button>}
-          {index === turns.length - 1 && ['failed', 'stopped'].includes(turn.state) && <button onClick={() => {
-            void run({ ...turn, id: crypto.randomUUID(), text: '', error: undefined, usage: undefined, state: 'streaming' }, turnsRef.current.slice(0, -1));
-          }}>重试</button>}
+          {turn.error && <p className="panel-error" role="alert">{turn.error}</p>}
+          {(turn.text || canRetry) && <div className="chat-turn-actions">
+            {turn.text && <button type="button" onClick={() => { void navigator.clipboard.writeText(turn.text).catch(error => setMessage(String(error))); }}><Copy16Regular />复制回复</button>}
+            {canRetry && <button type="button" onClick={() => {
+              void run({ ...turn, id: crypto.randomUUID(), text: '', error: undefined, usage: undefined, state: 'streaming' }, turnsRef.current.slice(0, -1));
+            }}><ArrowClockwise16Regular />重试</button>}
+          </div>}
         </article>;
       })}
     </div>
@@ -412,8 +436,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
         <button type="button" aria-label="快捷命令" title="快捷命令（/）" aria-expanded={picker === 'commands'} onClick={() => togglePicker('commands')}>/</button>
         <button type="button" className="chat-model-select" aria-label="选择模型" aria-expanded={picker === 'model'} title={`${provider === 'compatible' ? apiProfile?.name ?? providerName[provider] : providerName[provider]} · ${displayedModel ?? ''}`}
           onClick={() => togglePicker('model')}><span>{displayedModel || '选择模型'}</span><ChevronDown16Regular /></button>
-        {turns.length > 0 && <button type="button" className="chat-export" onClick={() => { void exportMarkdown(); }}>导出 Markdown</button>}
-        {busy ? <button className="chat-send" type="button" onClick={() => { void cancel(); }}>停止生成</button>
+        {busy ? <button className="chat-send btn-secondary" type="button" onClick={() => { void cancel(); }}>停止生成</button>
           : <button type="submit" className="chat-send primary" title={preferences.sendShortcut === 'enter' ? 'Enter 发送' : 'Ctrl + Enter 发送'}
             disabled={!ready || clearing || adding || !canSend || (provider === 'chatgpt' && !selectedGpt) || (provider === 'compatible' && !apiModel)}>发送</button>}
       </div>

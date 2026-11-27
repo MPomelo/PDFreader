@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fs, io::Write, path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
-use crate::{http, secrets::{SecretStore, SecretStatus}};
+use crate::{http, openai_compat, secrets::{SecretStore, SecretStatus}};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -23,9 +23,7 @@ impl Default for Config {
         glossary: String::new(), timeout_seconds: 60, max_tokens: 4096, streaming: true, answer_style: default_answer_style() } }
 }
 pub fn base_url(profile: &Profile) -> Result<url::Url, String> {
-    let url = http::service_base_url(&profile.base_url)?;
-    if url.path().ends_with("/chat/completions") || url.path().ends_with("/responses") { return Err("请填写 Base URL，例如 https://api.deepseek.com，而不是完整请求路径。".into()); }
-    Ok(url)
+    openai_compat::normalize_base_url(&profile.base_url)
 }
 pub fn binding(profile: &Profile) -> Result<String, String> { Ok(format!("{}|{}|{}", profile.id, base_url(profile)?, profile.auth)) }
 pub fn validate(config: &Config) -> Result<(), String> {
@@ -141,20 +139,12 @@ fn request_body(config: &Config, p: &Profile, text: &str, is_test: bool) -> Valu
     body
 }
 fn parse_response(response: http::Response, models: bool) -> Result<(String, String, Option<Value>, Vec<String>), String> {
-    match response.status {
-        200..=299 => {},
-        401 => return Err("401：密钥无效或已过期，请重新配置。".into()),
-        403 => return Err("403：当前密钥没有访问权限，请检查账户与接口权限。".into()),
-        429 => return Err("429：请求受限或额度不足；未自动重试，请稍后手动重试。".into()),
-        300..=399 => return Err("接口返回重定向，已阻止凭据转发；请核对 Base URL。".into()),
-        code => return Err(format!("服务返回 HTTP {code}；请检查地址、模型与账户。未自动重试。")),
-    }
-    let data: Value = serde_json::from_slice(&response.body).map_err(|_| "服务返回了无效 JSON；未作为译文保存。")?;
+    openai_compat::check_http_status(response.status)?;
     if models {
-        let items = data["data"].as_array().ok_or("当前接口不支持模型列表，请手填模型。")?;
-        let ids: Vec<String> = items.iter().filter_map(|v| v["id"].as_str()).filter(|id| id.len() <= 256).take(500).map(str::to_owned).collect();
+        let ids = openai_compat::parse_models_response(&response.body)?;
         return Ok((String::new(), String::new(), None, ids));
     }
+    let data: Value = serde_json::from_slice(&response.body).map_err(|_| "服务返回了无效 JSON；未作为译文保存。")?;
     let choice = data["choices"].get(0).ok_or("响应缺少 choices；未得到译文。")?;
     match choice["finish_reason"].as_str() {
         Some("stop") => {},
@@ -179,7 +169,7 @@ fn perform_with(config: Config, p: Profile, req: ApiRequest, state: &ApiState, c
     let text = match req.kind.as_str() { "test" => "The sky is blue.", "math-test" => "The loss is $L=\\frac{1}{N}\\sum_{i=1}^{N}(y_i-\\hat{y}_i)^2$, where $N$ is the sample count.", _ => req.text.as_str() };
     if !models && (text.trim().is_empty() || text.len() > 40000) { return Err("请选择非空文本，单次不超过 40000 字节。".into()); }
     let secret = if p.auth == "none" { None } else { Some(state.secrets.get(&binding(&p)?)?) };
-    let url = url::Url::parse(&format!("{}{suffix}", base_url(&p)?.as_str().trim_end_matches('/'), suffix=if models { "/models" } else { "/chat/completions" })).map_err(|_| "请求地址无效")?;
+    let url = openai_compat::endpoint_url(&base_url(&p)?, if models { "models" } else { "chat/completions" })?;
     let body = if models { None } else { Some(serde_json::to_vec(&request_body(&config, &p, text, matches!(req.kind.as_str(), "test" | "math-test"))).map_err(|_| "请求生成失败")?) };
     if cancel.load(Ordering::SeqCst) { return Err("已取消请求。".into()); }
     let response = transport(&url, &p.auth, secret.as_ref(), body, cancel, Duration::from_secs(config.timeout_seconds))?;

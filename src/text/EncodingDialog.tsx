@@ -17,8 +17,8 @@ export function EncodingDialog({ name, error, onAnswer }: { name: string; error:
         {encodings.map(value => <option key={value}>{value}</option>)}
       </select></label>
       <div className="dialog-actions">
-        <button type="button" onClick={() => onAnswer(null)}>取消</button>
-        <button type="submit" className="primary">打开</button>
+        <button type="button" className="btn-secondary" onClick={() => onAnswer(null)}>取消</button>
+        <button type="submit" className="btn-primary">打开</button>
       </div>
     </form>
   </dialog>;

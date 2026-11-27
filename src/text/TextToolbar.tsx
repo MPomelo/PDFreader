@@ -1,7 +1,16 @@
-import { ImageAdd20Regular, Search20Regular, Save20Regular, TextEditStyle20Regular } from '@fluentui/react-icons';
+import {
+  Edit16Regular, Eye16Regular, ImageAdd20Regular, LayoutColumnTwo16Regular,
+  Search20Regular, Save20Regular, TextEditStyle20Regular,
+} from '@fluentui/react-icons';
+import type { ReactNode } from 'react';
 import type { TextMode, TextTab } from './document';
 
 const modes: [TextMode, string][] = [['edit', '编辑'], ['preview', '预览'], ['split', '左右分栏']];
+const compactModes: [TextMode, string, ReactNode][] = [
+  ['edit', '编辑', <Edit16Regular key="edit" />],
+  ['split', '分栏', <LayoutColumnTwo16Regular key="split" />],
+  ['preview', '预览', <Eye16Regular key="preview" />],
+];
 
 export function TextToolbar({ tab, busy, attachments, compact = false, onSave, onFind, onUndo, onRedo, onWrap, onMode, onImage, onUtf8 }: {
   tab: TextTab;
@@ -44,6 +53,13 @@ export function TextToolbar({ tab, busy, attachments, compact = false, onSave, o
     </div>}
   </>;
   if (compact) return <div className="compact-document-actions">
+    {tab.kind === 'markdown' && <div className="compact-text-modes" role="group" aria-label="Markdown 视图切换">
+      {compactModes.map(([value, label, icon]) => (
+        <button type="button" key={value} disabled={busy} aria-label={label} title={label} aria-pressed={tab.mode === value} onClick={() => onMode(value)}>
+          {icon}
+        </button>
+      ))}
+    </div>}
     {save}{find}
     <details className="toolbar-menu compact-document-menu">
       <summary role="button" aria-label="文本工具" title="文本工具"><TextEditStyle20Regular /></summary>

@@ -3,7 +3,6 @@ import type { SecretStatus } from '../translation/client';
 
 export type ApiProfile = { id: string; name: string; baseUrl: string; model: string; auth: 'bearer' | 'api-key' | 'none'; streaming: boolean };
 export type SavedApiProfile = ApiProfile & { route: string };
-export const CHAT_API_PROFILES_CHANGED = 'pdfreader-chat-api-profiles-changed';
 
 export const chatApi = {
   list: () => invoke<SavedApiProfile[]>('chat_api_profiles'),

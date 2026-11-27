@@ -1,4 +1,4 @@
-use crate::{http, local, secrets::{Secret, SecretStatus}, translation::ApiState};
+use crate::{local, openai_compat, secrets::{Secret, SecretStatus}, translation::ApiState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -45,11 +45,7 @@ impl Profile {
             || self.name.is_empty() || self.name.len() > 160 || self.model.len() > 256 || self.base_url.len() > 2048 {
             return Err("API 配置名称、地址或模型名称无效。".into());
         }
-        let url = http::service_base_url(&self.base_url)?;
-        if self.base_url.trim().chars().any(char::is_control) || self.base_url.contains("{WorkspaceId}")
-            || ["/chat/completions", "/responses", "/models"].iter().any(|suffix| url.path().ends_with(suffix)) {
-            return Err("请填写 API 的 Base URL，例如 https://api.example.com/v1。".into());
-        }
+        let url = openai_compat::normalize_base_url(&self.base_url)?;
         self.base_url = url.as_str().trim_end_matches('/').into();
         Ok(())
     }
@@ -68,7 +64,8 @@ impl Profile {
     fn binding(&self) -> String { format!("chat-api|{}", self.route()) }
     fn snapshot(self) -> SavedProfile { SavedProfile { route: self.route(), profile: self } }
     pub fn endpoint(&self, endpoint: &str) -> Result<url::Url, String> {
-        url::Url::parse(&format!("{}/{endpoint}", self.base_url)).map_err(|_| "API 请求地址无效。".into())
+        let base = url::Url::parse(&self.base_url).map_err(|_| "API 请求地址无效。")?;
+        openai_compat::endpoint_url(&base, endpoint)
     }
 }
 
@@ -185,14 +182,7 @@ pub fn chat_api_secret_delete(app: AppHandle, state: State<ApiState>, id: String
 }
 
 pub fn check_status(status: u32) -> Result<(), String> {
-    match status {
-        200..=299 => Ok(()),
-        300..=399 => Err("API 返回了重定向。请核对 Base URL。".into()),
-        401 | 403 => Err("API 拒绝访问，请核对密钥、模型权限和账户。".into()),
-        404 => Err("未找到 API 接口或模型。请核对 Base URL 和模型名称。".into()),
-        429 => Err("API 请求受限或额度不足，请检查账户用量。".into()),
-        status => Err(format!("API 返回 HTTP {status}。请检查服务和模型配置。")),
-    }
+    openai_compat::check_http_status(status)
 }
 
 pub fn usage(value: &Value) -> Value {
@@ -221,15 +211,8 @@ pub fn reply(body: &[u8]) -> Result<(String, String, Value), String> {
 pub async fn chat_api_models(app: AppHandle, id: String, route: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (profile, secret) = connection(&app, &id, &route)?;
-        let url = profile.endpoint("models")?;
-        let response = http::request(&url, profile.auth(), secret.as_ref(), None, &AtomicBool::new(false), Duration::from_secs(15))?;
-        if matches!(response.status, 404 | 405 | 501) { return Err("此服务未提供模型列表，请手动填写模型名称。".into()); }
-        check_status(response.status)?;
-        let value: Value = serde_json::from_slice(&response.body).map_err(|_| "无法读取模型列表，请手动填写模型名称。")?;
-        let data = value["data"].as_array().ok_or("此服务未提供兼容的模型列表，请手动填写模型名称。")?;
-        let mut seen = std::collections::HashSet::new();
-        Ok(data.iter().filter_map(|item| item["id"].as_str())
-            .filter(|id| !id.trim().is_empty() && id.len() <= 256 && seen.insert(*id)).take(500).map(str::to_owned).collect())
+        let base = url::Url::parse(&profile.base_url).map_err(|_| "API 请求地址无效。")?;
+        openai_compat::fetch_models(&base, profile.auth(), secret.as_ref(), &AtomicBool::new(false), Duration::from_secs(15))
     }).await.map_err(|_| "读取模型列表的任务意外结束。".to_string())?
 }
 

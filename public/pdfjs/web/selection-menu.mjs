@@ -1,6 +1,7 @@
-const actions = [
-  ['copy', '复制'], ['highlight', '高亮'], ['underline', '下划线'],
-  ['strikeout', '删除线'], ['comment', '写注释'], ['translate', '翻译'], ['ask', '问 AI'], ['citation', '引文'],
+const actionGroups = [
+  [['copy', '复制']],
+  [['highlight', '高亮'], ['underline', '下划线'], ['strikeout', '删除线'], ['comment', '写注释']],
+  [['translate', '翻译'], ['ask', '问 AI'], ['citation', '引文']],
 ];
 
 export function hasTextSelection(selection, viewer) {
@@ -17,14 +18,23 @@ export function createSelectionMenu(viewer, { run, autoShow, onDismissHostMenus,
   menu.hidden = true;
   menu.setAttribute('role', 'toolbar');
   menu.setAttribute('aria-label', '选区操作');
-  const buttons = actions.map(([action, label]) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = label;
-    button.dataset.action = action;
-    button.tabIndex = action === 'copy' ? 0 : -1;
-    menu.append(button);
-    return button;
+  const buttons = [];
+  actionGroups.forEach((group, groupIndex) => {
+    if (groupIndex > 0) {
+      const divider = document.createElement('span');
+      divider.className = 'pdfreader-selection-divider';
+      divider.setAttribute('aria-hidden', 'true');
+      menu.append(divider);
+    }
+    for (const [action, label] of group) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.dataset.action = action;
+      button.tabIndex = action === 'copy' ? 0 : -1;
+      menu.append(button);
+      buttons.push(button);
+    }
   });
   document.body.append(menu);
   let ranges = [];

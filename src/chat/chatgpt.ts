@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export const CHATGPT_SESSION_CHANGED = 'pdfreader-chatgpt-session-changed';
 export type ChatGptAccount = { id: string; email: string | null; connected: boolean; planEnabled: boolean };
 export type ChatGptStatus = { activeId: string | null; accounts: ChatGptAccount[]; signingIn: boolean };
 export type ChatGptCatalog = { accountId: string; models: { slug: string; name: string }[] };

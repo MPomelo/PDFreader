@@ -64,6 +64,8 @@ try {
           case 'startup_pdfs': return { paths: [], errors: [] };
           case 'choose_documents': return window.qa.open;
           case 'reopen_workspace_document': return args.path;
+          case 'resolve_pdf_meta': return { name: 'paper.pdf', path: pdfPath };
+          case 'read_pdf_bytes': return Uint8Array.from(atob(pdf), char => char.charCodeAt(0)).buffer;
           case 'read_pdf': return { name: 'paper.pdf', path: pdfPath, bytes: Array.from(atob(pdf), char => char.charCodeAt(0)) };
           case 'native_page_layout': return null;
           case 'read_text': return files[args.path];

@@ -111,14 +111,8 @@ fn request_with(url: &url::Url, auth: &str, secret: Option<&Secret>, body: Optio
             drop(Arc::from_raw(owned as *const Context)); return Err(error(GetLastError()));
         }
         let mut headers = format!("Content-Type: {content_type}\r\nAccept: {accept}\r\n");
-        if auth != "none" {
-            let key = std::str::from_utf8(&secret.ok_or("未配置密钥")?.0).map_err(|_| "密钥编码无效")?;
-            headers.push_str(match auth {
-                "api-key" => "api-key: ",
-                "anthropic" => "anthropic-version: 2023-06-01\r\nx-api-key: ",
-                _ => "Authorization: Bearer ",
-            });
-            headers.push_str(key); headers.push_str("\r\n");
+        if let Some(auth_line) = crate::openai_compat::auth_header(auth, secret)? {
+            headers.push_str(&auth_line);
         }
         if cancel.load(Ordering::SeqCst) { return Err("已取消请求。".into()); }
         ok(WinHttpSendRequest(request.0, wide(&headers).as_ptr(), u32::MAX, if context.body.is_empty() { std::ptr::null() } else { context.body.as_ptr().cast() }, context.body.len() as u32, context.body.len() as u32, owned))?;

@@ -7,6 +7,7 @@ export const TRANSLATION_CAPABILITIES = Object.freeze({ selection: true, fullDoc
 export const MATH_TEST_TEXT = String.raw`The loss is $L=\frac{1}{N}\sum_{i=1}^{N}(y_i-\hat{y}_i)^2$, where $N$ is the sample count.`;
 export type ApiRequest = { requestId: string; documentId: string; profileId: string; kind: ApiKind; text: string };
 export type ApiResult = { requestId: string; documentId: string; text: string; model: string; elapsedMs: number; usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null; models: string[]; reasoning?: string };
+export type DisplayResult = { response: ApiResult; original: string; originalRaw: string; page: number; test: boolean; domain?: string; language?: string; cached?: boolean; testKind?: 'test' | 'math-test'; service: string; outcome: 'complete' | 'streaming' | 'cancelled' | 'error' };
 export type StreamUpdate = { requestId: string; documentId: string; seq: number; content: string; reasoning: string };
 export const api = {
   desktop: isTauri,
