@@ -1,0 +1,40 @@
+name: Upload verified PDFreader 2.2.3 assets
+on:
+  push:
+    branches: [release-assets-v2.2.3]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: PDFreader-windows-x64-installer
+          run-id: 45960585109
+          path: verified-release
+          github-token: ${{ github.token }}
+      - name: Verify and upload to the 2.2.3 release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: '460294590'
+          SOURCE: f5af0b2f659a6fbc28da3e60d135d2c0860552d4
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY/releases/$RELEASE"
+          gh run view 45960585109 --json headSha,headBranch,status,conclusion |
+            jq -e --arg source "$SOURCE" '.headSha == $source and .headBranch == "main" and .status == "completed" and .conclusion == "success"'
+          gh api "$api" |
+            jq -e --arg source "$SOURCE" '.draft and .prerelease and .tag_name == "v2.2.3" and .target_commitish == $source and (.assets | length == 0)'
+          cp release-upload/{SHA256SUMS.txt,release-manifest.json} verified-release/
+          cd verified-release
+          sha256sum -c SHA256SUMS.txt
+          gh release upload v2.2.3 PDFreader_2.2.3_x64-setup.exe SHA256SUMS.txt release-manifest.json
+          gh api "$api" > release.json
+          jq -e '.draft and (.assets | length == 3) and all(.assets[]; .state == "uploaded")' release.json
+          for name in PDFreader_2.2.3_x64-setup.exe SHA256SUMS.txt release-manifest.json; do
+            digest="sha256:$(sha256sum "$name" | cut -d ' ' -f1)"
+            jq -e --arg name "$name" --arg digest "$digest" '.assets | any(.name == $name and .digest == $digest)' release.json
+          done
