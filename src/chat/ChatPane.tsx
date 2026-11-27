@@ -4,10 +4,11 @@ import { Add16Regular, ChevronDown16Regular, ChevronLeft16Regular, Dismiss16Regu
 import { repository } from '../local/repository';
 import { MarkdownRenderer } from '../translation/MarkdownRenderer';
 import { CHAT_PREFERENCES_CHANGED } from './ChatSettings';
+import { chatApi, CHAT_API_PROFILES_CHANGED, type SavedApiProfile } from './chat-api';
 import {
   activeAccount, CHATGPT_SESSION_CHANGED, openChatGptUsage, readChatGptModels, readChatGptStatus, selectChatGptModel, type ChatGptCatalog,
 } from './chatgpt';
-import { chatMessages, conversationName, defaultChat, materialMarker, providerName, providers, type ChatCommand, type Conversation, type Material, type MaterialMode, type Provider, type Turn } from './model';
+import { chatMessages, conversationName, defaultChat, materialMarker, providerName, providers, turnProviderName, type ChatCommand, type Conversation, type Material, type MaterialMode, type Provider, type Turn } from './model';
 import './chat.css';
 
 export type { Material } from './model';
@@ -21,7 +22,7 @@ function markdownExport(turns: Turn[]) {
   return '# PDFreader 对话\n\n' + turns.map(turn => {
     const sources = turn.materials.map(item =>
       `- ${materialMarker(item)} · ${item.name.replace(/[\r\n]/g, ' ')}${item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}\n\n${item.text.split('\n').map(line => '> ' + line).join('\n')}`).join('\n\n');
-    return `## 问题\n\n${turn.prompt}\n\n${sources}\n\n## ${providerName[turn.provider]} · ${turn.model}\n\n${turn.text}`;
+    return `## 问题\n\n${turn.prompt}\n\n${sources}\n\n## ${turnProviderName(turn)} · ${turn.model}\n\n${turn.text}`;
   }).join('\n\n---\n\n');
 }
 
@@ -37,6 +38,9 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
   const [model, setModel] = useState(preferences.models.openai);
   const [catalog, setCatalog] = useState<ChatGptCatalog | null>(null);
   const [catalogError, setCatalogError] = useState('');
+  const [apiProfiles, setApiProfiles] = useState<SavedApiProfile[]>([]);
+  const [apiProfileId, setApiProfileId] = useState('');
+  const [apiError, setApiError] = useState('');
   const [draft, setDraft] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [picker, setPicker] = useState<'materials' | 'commands' | 'model' | null>(null);
@@ -63,7 +67,9 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
   const busy = turns.at(-1)?.state === 'streaming';
   const canSend = !!(draft.trim() || command);
   const selectedGpt = provider === 'chatgpt' ? selectChatGptModel(catalog, model) : undefined;
-  const displayedModel = provider === 'chatgpt' ? selectedGpt?.name : model;
+  const apiProfile = apiProfiles.find(profile => profile.id === apiProfileId);
+  const apiModel = apiProfile ? model.trim() || apiProfile.model : '';
+  const displayedModel = provider === 'chatgpt' ? selectedGpt?.name : provider === 'compatible' ? apiModel : model;
   const matchingDocuments = documents.filter(document => document.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const matchingCommands = preferences.commands.filter(item => item.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const references = new Map(turns.flatMap(turn => turn.materials).map(material => [materialMarker(material), material]));
@@ -98,9 +104,11 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       const initial = data.conversations.find(item => item.id === id);
       const restored = (initial?.turns ?? []).map(turn => turn.state === 'streaming' ? { ...turn, state: 'stopped' as const } : turn);
       update(restored);
-      const defaultProvider = restored.at(-1)?.provider ?? data.preferences.provider;
+      const last = restored.at(-1);
+      const defaultProvider = last?.provider ?? data.preferences.provider;
       setPreferences(data.preferences); setProvider(defaultProvider);
-      setModel(restored.at(-1)?.model || data.preferences.models[defaultProvider]);
+      setModel(last?.model || data.preferences.models[defaultProvider]);
+      setApiProfileId(last?.apiProfileId ?? data.preferences.apiProfileId);
     }).catch(error => setMessage(String(error))).finally(() => { if (alive.current) setReady(true); });
     const refresh = () => { void repository.chat().then(({ preferences }) => {
       if (!alive.current) return;
@@ -108,6 +116,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       if (!turnsRef.current.length && !chosenModel.current) {
         setProvider(preferences.provider);
         setModel(preferences.models[preferences.provider]);
+        setApiProfileId(preferences.apiProfileId);
       }
     }).catch(() => {}); };
     window.addEventListener(CHAT_PREFERENCES_CHANGED, refresh);
@@ -129,7 +138,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       try {
         const account = activeAccount(await readChatGptStatus());
         if (!current || generation !== request) return;
-        if (!account?.connected) throw Error('请在 AI 对话设置中登录 ChatGPT。');
+        if (!account?.connected) throw Error('请在「AI设置」中登录 ChatGPT。');
         if (!account.planEnabled) throw Error('请授权使用 ChatGPT 订阅。');
         const result = await readChatGptModels(account.id);
         if (current && generation === request && result.accountId === account.id) {
@@ -144,6 +153,21 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
     const refresh = () => { void read(); };
     window.addEventListener(CHATGPT_SESSION_CHANGED, refresh);
     return () => { current = false; window.removeEventListener(CHATGPT_SESSION_CHANGED, refresh); };
+  }, [provider, visible]);
+  useEffect(() => {
+    if (provider !== 'compatible' || !visible || !isTauri()) return;
+    let current = true;
+    let generation = 0;
+    const read = () => {
+      const request = ++generation;
+      setApiProfiles([]);
+      setApiError('');
+      void chatApi.list().then(profiles => { if (current && request === generation) setApiProfiles(profiles); })
+        .catch(error => { if (current && request === generation) setApiError(String(error)); });
+    };
+    read();
+    window.addEventListener(CHAT_API_PROFILES_CHANGED, read);
+    return () => { current = false; window.removeEventListener(CHAT_API_PROFILES_CHANGED, read); };
   }, [provider, visible]);
   useEffect(() => {
     if (clearedAt.current === clearRevision) return;
@@ -186,6 +210,8 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
         requestId, sessionId: id, provider: turn.provider, model: turn.model, prompt: preferences.prompt, messages,
         ollamaPort: turn.provider === 'ollama' ? turn.ollamaPort ?? preferences.ollamaPort : undefined,
         chatgptAccount: turn.provider === 'chatgpt' ? turn.chatgptAccount : undefined,
+        apiProfileId: turn.apiProfileId,
+        apiProfileRoute: turn.apiProfileRoute,
       }, onChunk });
       if (pending.current !== requestId) return;
       update(turnsRef.current.map(item => item.id === turn.id ? { ...item, ...result, usage: result.usage ?? undefined, state: 'complete' } : item));
@@ -208,8 +234,14 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
     if (provider === 'chatgpt' && turnsRef.current.some(turn => turn.chatgptAccount && turn.chatgptAccount !== catalog?.accountId)) {
       setMessage('此对话包含另一 ChatGPT 账户的历史。请新建对话，或切回原账户。'); return;
     }
+    if (provider === 'compatible' && (!apiProfile || !apiModel)) {
+      setMessage(apiError || '请选择 API 配置并填写模型名称。'); return;
+    }
     void run({ id: crypto.randomUUID(), prompt: draft.trim() || command!.name, instruction: command?.instruction,
-      materials: [...materials], provider, model: selectedGpt?.slug ?? model.trim(), text: '', state: 'streaming',
+      materials: [...materials], provider, model: selectedGpt?.slug ?? (provider === 'compatible' ? apiModel : model.trim()), text: '', state: 'streaming',
+      apiProfileId: provider === 'compatible' ? apiProfile?.id : undefined,
+      apiProfileRoute: provider === 'compatible' ? apiProfile?.route : undefined,
+      apiProfileName: provider === 'compatible' ? apiProfile?.name : undefined,
       chatgptAccount: provider === 'chatgpt' ? catalog?.accountId : undefined,
       ollamaPort: provider === 'ollama' ? preferences.ollamaPort : undefined }, turnsRef.current);
     if (pending.current) { setDraft(''); setMaterials([]); setCommand(null); setPicker(null); }
@@ -298,7 +330,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
         return <article className="chat-turn" key={turn.id}>
           <p className="chat-question">{turn.prompt}</p>
           {turn.materials.map(item => <details key={item.id}><summary>{item.name}</summary><p className="selection">{item.text}</p></details>)}
-          <div className="chat-model">{providerName[turn.provider]} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
+          <div className="chat-model">{turnProviderName(turn)} · {turn.model} {turn.state === 'stopped' && '· 已停止'}</div>
           {turn.text && <MarkdownRenderer source={turn.text} pending={turn.state === 'streaming'} referenceMarkers={cited.map(materialMarker).join(' ')} />}
           {cited.map((item, position) => <button className="chat-citation" key={item.id} onClick={() => { void onLocate(item).catch(error => setMessage(String(error))); }}>
             <span aria-hidden="true">[{position + 1}]</span> 定位原文 · {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}</button>)}
@@ -333,12 +365,20 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
           <label className="field">模型服务<select aria-label="模型服务" value={provider} onChange={event => {
             const next = event.target.value as Provider;
             chosenModel.current = true; setProvider(next); setModel(preferences.models[next]);
+            if (next === 'compatible') setApiProfileId(preferences.apiProfileId);
           }}>{providers.map(id => <option key={id} value={id}>{providerName[id]}</option>)}</select></label>
+          {provider === 'compatible' && <label className="field">API 配置<select aria-label="API 配置" value={apiProfile?.id ?? ''} onChange={event => {
+            chosenModel.current = true; setApiProfileId(event.target.value); setModel(''); setMessage('');
+          }}>
+            {!apiProfile && <option value="">选择已保存的配置</option>}
+            {apiProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+          </select></label>}
           {provider === 'chatgpt' ? <label className="field">对话模型<select aria-label="对话模型" disabled={!selectedGpt}
             value={selectedGpt?.slug ?? ''} onChange={event => { chosenModel.current = true; setModel(event.target.value); }}>
             {!selectedGpt && <option value="">{catalogError ? '暂无可用模型' : '正在读取模型…'}</option>}
             {catalog?.models.map(item => <option key={item.slug} value={item.slug}>{item.name}</option>)}
-          </select></label> : <label className="field">对话模型<input value={model} maxLength={80} onChange={event => {
+          </select></label> : <label className="field">对话模型<input value={model} disabled={provider === 'compatible' && !apiProfile}
+            placeholder={provider === 'compatible' ? apiProfile?.model : undefined} maxLength={provider === 'compatible' ? 256 : 80} onChange={event => {
             chosenModel.current = true; setModel(event.target.value);
           }} /></label>}
           <button type="button" onClick={() => { setPicker(null); onSettings(provider); }}>配置模型服务</button>
@@ -346,6 +386,7 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       </div>}
       {message && <p className="chat-notice" role="status">{message}</p>}
       {provider === 'chatgpt' && catalogError && !message && <p className="chat-notice" role="status">{catalogError}</p>}
+      {provider === 'compatible' && apiError && !message && <p className="chat-notice" role="status">{apiError}</p>}
       {!!materials.length && <ul className="chat-materials">{materials.map(item => <li key={item.id}><details><summary>
         {item.name}{item.page ? ' · 第 ' + item.page + ' 页' : item.line ? ' · 第 ' + item.line + ' 行' : ''}
       </summary><p className="selection">{item.text}</p></details><button type="button" aria-label={`移除资料 ${item.name}`} title="移除资料"
@@ -369,17 +410,21 @@ export function ChatPane({ id, visible, incoming, onReceive, onTemporary, docume
       <div className="chat-composer-actions">
         <button type="button" aria-label="添加资料" title="添加资料（@）" aria-expanded={picker === 'materials'} onClick={() => togglePicker('materials')}><Add16Regular /></button>
         <button type="button" aria-label="快捷命令" title="快捷命令（/）" aria-expanded={picker === 'commands'} onClick={() => togglePicker('commands')}>/</button>
-        <button type="button" className="chat-model-select" aria-label="选择模型" aria-expanded={picker === 'model'} title={`${providerName[provider]} · ${displayedModel ?? ''}`}
+        <button type="button" className="chat-model-select" aria-label="选择模型" aria-expanded={picker === 'model'} title={`${provider === 'compatible' ? apiProfile?.name ?? providerName[provider] : providerName[provider]} · ${displayedModel ?? ''}`}
           onClick={() => togglePicker('model')}><span>{displayedModel || '选择模型'}</span><ChevronDown16Regular /></button>
         {turns.length > 0 && <button type="button" className="chat-export" onClick={() => { void exportMarkdown(); }}>导出 Markdown</button>}
         {busy ? <button className="chat-send" type="button" onClick={() => { void cancel(); }}>停止生成</button>
           : <button type="submit" className="chat-send primary" title={preferences.sendShortcut === 'enter' ? 'Enter 发送' : 'Ctrl + Enter 发送'}
-            disabled={!ready || clearing || adding || !canSend || (provider === 'chatgpt' && !selectedGpt)}>发送</button>}
+            disabled={!ready || clearing || adding || !canSend || (provider === 'chatgpt' && !selectedGpt) || (provider === 'compatible' && !apiModel)}>发送</button>}
       </div>
+      {provider === 'compatible' && <div className="chatgpt-plan">
+        <span>{apiProfile ? `API · ${apiProfile.name}` : 'OpenAI 兼容 API'}</span>
+        {!apiProfile && <button type="button" onClick={() => onSettings(provider)}>打开 AI设置</button>}
+      </div>}
       {provider === 'chatgpt' && <div className="chatgpt-plan">
         <span>{selectedGpt ? '正在使用 ChatGPT 订阅' : 'ChatGPT 订阅'}</span>
         {selectedGpt ? <button type="button" onClick={() => { void openChatGptUsage().catch(error => setMessage(String(error))); }}>管理 ChatGPT 用量</button>
-          : <button type="button" onClick={() => onSettings(provider)}>打开对话设置</button>}
+          : <button type="button" onClick={() => onSettings(provider)}>打开 AI设置</button>}
       </div>}
     </form>
   </div>;

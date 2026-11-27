@@ -3,13 +3,15 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { repository } from '../local/repository';
 import type { SecretStatus } from '../translation/client';
 import { ChatGptSettings } from './ChatGptSettings';
+import { ChatApiSettings } from './ChatApiSettings';
+import { chatApi } from './chat-api';
 import { defaultChat, providerName, providers, validCommands, validOllamaPort, type ChatCommand, type ChatPreferences, type Provider } from './model';
 
 export const CHAT_PREFERENCES_CHANGED = 'pdfreader-chat-preferences-changed';
 const sections = ['常规', '模型服务', '快捷命令'] as const;
 
-export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => void; openChatGpt?: boolean }) {
-  const [section, setSection] = useState<(typeof sections)[number]>(openChatGpt ? '模型服务' : '常规');
+export function ChatSettings({ onClear, initialProvider }: { onClear: () => void; initialProvider?: Provider }) {
+  const [section, setSection] = useState<(typeof sections)[number]>(initialProvider ? '模型服务' : '常规');
   const [preferences, setPreferences] = useState(defaultChat().preferences);
   const [provider, setProvider] = useState<Provider>('openai');
   const [port, setPort] = useState('11434');
@@ -23,11 +25,12 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
   const key = useRef<HTMLInputElement>(null);
   const local = provider === 'ollama';
   const chatgpt = provider === 'chatgpt';
+  const compatible = provider === 'compatible';
 
   useEffect(() => {
     void repository.chat().then(({ preferences }) => {
       setPreferences(preferences);
-      setProvider(openChatGpt ? 'chatgpt' : preferences.provider);
+      setProvider(initialProvider ?? preferences.provider);
       setPort(String(preferences.ollamaPort));
       setReady(true);
     }).catch(error => setNotice(String(error)));
@@ -35,7 +38,7 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
   useEffect(() => {
     let current = true;
     setStatus(null);
-    if (!local && !chatgpt && isTauri()) void invoke<SecretStatus>('chat_secret_status', { provider })
+    if (!local && !chatgpt && !compatible && isTauri()) void invoke<SecretStatus>('chat_secret_status', { provider })
       .then(value => { if (current) setStatus(value); })
       .catch(error => { if (current) setNotice(String(error)); });
     return () => { current = false; };
@@ -51,7 +54,7 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
     if (!validOllamaPort(next.ollamaPort)) {
       setProvider('ollama'); setSection('模型服务'); setNotice('请输入 1 到 65535 之间的端口。'); return;
     }
-    if (!next.models[next.provider]) {
+    if (next.provider !== 'compatible' && !next.models[next.provider]) {
       setProvider(next.provider); setSection('模型服务');
       setNotice(next.provider === 'chatgpt' ? '请先登录 ChatGPT 并选择模型。' : '请为默认服务填写模型名称。'); return;
     }
@@ -60,6 +63,10 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
     }
     setBusy(true);
     try {
+      if (next.provider === 'compatible' && (!isTauri() || !(await chatApi.list()).some(profile => profile.id === next.apiProfileId && profile.model))) {
+        setProvider('compatible'); setSection('模型服务');
+        setNotice('请保存带有模型名称的 API 配置，并设为默认 API 配置。'); return;
+      }
       await repository.saveChatPreferences(next);
       setPreferences(next);
       window.dispatchEvent(new Event(CHAT_PREFERENCES_CHANGED));
@@ -68,7 +75,7 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
     finally { setBusy(false); }
   }
   async function credential(remove: boolean) {
-    if (local || chatgpt) return;
+    if (local || chatgpt || compatible) return;
     setBusy(true);
     try {
       const value = await invoke<SecretStatus>(remove ? 'chat_secret_delete' : 'chat_secret_save',
@@ -99,7 +106,7 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
   }
 
   return <section className="chat-settings">
-    <h2>AI 对话</h2>
+    <h2>AI设置</h2>
     <nav className="chat-settings-nav" aria-label="对话设置分类">
       {sections.map(item => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} disabled={busy}
         onClick={() => { setSection(item); setNotice(''); }}>{item}</button>)}
@@ -124,10 +131,11 @@ export function ChatSettings({ onClear, openChatGpt = false }: { onClear: () => 
           if (key.current) key.current.value = '';
           setProvider(event.target.value as Provider); setNotice('');
         }}>{providers.map(id => <option key={id} value={id}>{providerName[id]}</option>)}</select></label>
-        {!chatgpt && <label className="field">模型名称<input value={preferences.models[provider]} maxLength={80} onChange={event => setModel(event.target.value)} /></label>}
+        {!chatgpt && !compatible && <label className="field">模型名称<input value={preferences.models[provider]} maxLength={80} onChange={event => setModel(event.target.value)} /></label>}
         <label className="checkbox"><input type="checkbox" checked={preferences.provider === provider}
           disabled={preferences.provider === provider} onChange={() => setPreferences({ ...preferences, provider })} />设为默认模型服务</label>
-        {chatgpt ? <ChatGptSettings model={preferences.models.chatgpt} onModel={setModel} /> : local ? <>
+        {compatible ? <ChatApiSettings defaultId={preferences.apiProfileId} onDefault={id => setPreferences(previous => ({ ...previous, apiProfileId: id }))} />
+          : chatgpt ? <ChatGptSettings model={preferences.models.chatgpt} onModel={setModel} /> : local ? <>
           <p className="muted">连接本机 Ollama，可直接使用已下载的模型，无需 API 密钥。</p>
           <label className="field">本机端口<input value={port} inputMode="numeric" maxLength={5}
             onChange={event => { setPort(event.target.value); setModelList([]); }} /></label>

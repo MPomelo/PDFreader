@@ -38,6 +38,9 @@ API secrets are stored through native Windows Credential Manager or the explicit
 native in-memory session mode. Saved JSON configuration contains no API key, and
 the renderer receives only credential status. A secret pasted into the API form
 is briefly present in that form before submission, then cleared.
+Third-party chat profiles use a separate configuration file and credential binding
+from translation. Changing a chat profile's endpoint or authentication method
+requires saving the key for the new configuration.
 
 On Windows, application files are under the Roaming AppData directory
 `local.pomelo.pdfreader`. `local-v1` contains workspace layout, recent paths, reading state, notes, cache and AI history; the

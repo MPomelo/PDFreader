@@ -194,9 +194,9 @@ pub fn access_token(app: &AppHandle, id: &str, cancel: &Arc<AtomicBool>) -> Resu
     accounts(app, |path, file, state| {
         if file.active_id.as_deref() != Some(id) { return Err("所选 ChatGPT 账户已变更，请重新选择模型并发送。".into()); }
         if cancel.load(Ordering::SeqCst) { return Err("已停止请求。".into()); }
-        let account = file.accounts.iter_mut().find(|account| account.id == id).ok_or("请先在 AI 对话设置登录 ChatGPT。")?;
-        let tokens = account.tokens.as_mut().ok_or("请先在 AI 对话设置登录 ChatGPT。")?;
-        if !tokens.plan_enabled() { return Err("请在 AI 对话设置授权使用 ChatGPT 订阅。".into()); }
+        let account = file.accounts.iter_mut().find(|account| account.id == id).ok_or("请先在「AI设置」中登录 ChatGPT。")?;
+        let tokens = account.tokens.as_mut().ok_or("请先在「AI设置」中登录 ChatGPT。")?;
+        if !tokens.plan_enabled() { return Err("请在「AI设置」中授权使用 ChatGPT 订阅。".into()); }
         let now = oauth::now();
         if tokens.expiry <= now + 60 && tokens.refresh.is_some() {
             match oauth::refresh(id, tokens.refresh.as_deref().unwrap(), &AtomicBool::new(false)) {
@@ -237,7 +237,7 @@ pub fn response_error(status: u32, code: Option<&str>) -> String {
         Some("subscription_sharing_usage_limit_exceeded") => "已达到 ChatGPT 订阅或此应用的用量上限，请查看「管理 ChatGPT 用量」。",
         Some("subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable") => "暂时无法读取 ChatGPT 订阅用量，请稍后重试。",
         Some("subscription_sharing_unsupported_capability") => "所选模型或请求使用了 ChatGPT 订阅暂不支持的功能，请切换模型或调整问题。",
-        Some("subscription_sharing_invalid_user") => "ChatGPT 登录已失效，请在 AI 对话设置重新登录。",
+        Some("subscription_sharing_invalid_user") => "ChatGPT 登录已失效，请在「AI设置」中重新登录。",
         Some("chatpass_v2_scope_not_authorized" | "chatpass_v2_invalid_authorization_context") => "ChatGPT 未授权 PDFreader 使用订阅，请在设置中检查授权。",
         _ => match status {
             401 => "ChatGPT 未接受本次登录凭据，请在设置中重新登录。",

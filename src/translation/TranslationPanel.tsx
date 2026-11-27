@@ -205,7 +205,7 @@ export function TranslationPanel({ keepSnapshot = false, mode = 'panel', setting
   if (!visible) return null;
   if (mode === 'settings') return <section className="translation-settings">
     {!api.desktop() ? <p className="hint">桌面版支持服务配置。</p> : loadError ? <><p role="alert">{loadError}</p><button onClick={() => void load()}>重新读取设置</button></> : !config || !profile ? <p role="status">正在读取设置…</p> : <>
-      {settingsSection === 'api' ? <><h2>API 服务</h2><p className="muted">配置模型与密钥，密钥保存在本机。</p>
+      {settingsSection === 'api' ? <><h2>翻译配置</h2><p className="muted">设置选区翻译使用的服务、模型和密钥。</p>
       <label className="field">服务配置<select aria-label="服务配置" value={config.activeId} disabled={saving} onChange={event => {
         edit({ ...config, activeId: event.target.value });
       }}>{config.profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>

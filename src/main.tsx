@@ -885,7 +885,8 @@ function App() {
                 updateExtras([...extrasRef.current]);
               }} documents={tabs.map(item => ({ id: item.id, name: item.name, kind: item.kind }))}
                 getMaterial={makeMaterial} onLocate={locateMaterial} onOpenHistory={openConversation} onDeleteHistory={id => clearChatHistory([id])}
-                onNew={() => addFeature('chat', column ?? workspaceRef.current.focus)} onSettings={provider => openSettings(provider === 'chatgpt' ? 'chatgpt' : 'chat')}
+                onNew={() => addFeature('chat', column ?? workspaceRef.current.focus)}
+                onSettings={provider => openSettings(provider === 'chatgpt' ? 'chatgpt' : provider === 'compatible' ? 'chat-api' : 'chat')}
                 clearRevision={chatRevisions[tab.id] ?? 0} stopRegistration={(id, stop) => {
                   if (stop) chatStops.current.set(id, stop); else chatStops.current.delete(id);
                 }} />

@@ -4,6 +4,16 @@ use std::{cell::UnsafeCell, ffi::c_void, sync::{Arc, atomic::{AtomicBool, Orderi
 use windows_sys::Win32::{Foundation::GetLastError, Networking::WinHttp::*};
 use crate::secrets::Secret;
 pub const MAX_RESPONSE: usize = 2 * 1024 * 1024;
+pub fn service_base_url(value: &str) -> Result<url::Url, String> {
+    let value = value.trim().trim_end_matches('/');
+    let url = url::Url::parse(value).map_err(|_| "API 地址无效；请填写完整 Base URL。")?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    if (url.scheme() != "https" && !(url.scheme() == "http" && local)) || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+        return Err("地址须为不含密码、查询参数或片段的 HTTPS Base URL；本机服务可用 HTTP。".into());
+    }
+    Ok(url)
+}
 pub struct Response { pub status: u32, pub body: Vec<u8> }
 enum Event { Ready(u32), Read(Vec<u8>), Error(u32) }
 struct Context { sender: mpsc::Sender<Event>, buffer: UnsafeCell<[u8; 8192]>, body: Vec<u8> }

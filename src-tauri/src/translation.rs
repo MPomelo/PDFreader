@@ -23,13 +23,7 @@ impl Default for Config {
         glossary: String::new(), timeout_seconds: 60, max_tokens: 4096, streaming: true, answer_style: default_answer_style() } }
 }
 pub fn base_url(profile: &Profile) -> Result<url::Url, String> {
-    let value = profile.base_url.trim().trim_end_matches('/');
-    let url = url::Url::parse(value).map_err(|_| "API 地址无效；请填写完整 Base URL。")?;
-    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
-    if (url.scheme() != "https" && !(url.scheme() == "http" && local)) || url.host_str().is_none()
-        || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
-        return Err("地址须为不含密码、查询参数或片段的 HTTPS Base URL；本机服务可用 HTTP。".into());
-    }
+    let url = http::service_base_url(&profile.base_url)?;
     if url.path().ends_with("/chat/completions") || url.path().ends_with("/responses") { return Err("请填写 Base URL，例如 https://api.deepseek.com，而不是完整请求路径。".into()); }
     Ok(url)
 }

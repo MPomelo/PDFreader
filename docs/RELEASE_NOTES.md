@@ -1,4 +1,16 @@
-# PDFreader 2.2.1
+# PDFreader 2.2.2
+
+适用于 Windows 10/11 x64 的预发行版。
+
+- AI 对话新增第三方 OpenAI 兼容 API。可保存和切换多套配置，分别设置 API 地址、密钥、模型和流式输出。
+- 提供 DeepSeek、通义千问、Kimi、智谱 GLM、小米 MiMo、Gemini 和 OpenRouter 模板，也可使用自定义兼容地址。服务支持时可读取模型列表。
+- 设置入口改为「翻译配置」与「AI设置」。两处服务和密钥独立保存。
+
+下载 [Windows x64 安装包](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.2)，可用同页的 `SHA256SUMS.txt` 核对。安装包未签名。
+
+第三方 API 的配置切换和问答使用测试数据验证，尚未使用真实账户密钥逐项验证。
+
+## PDFreader 2.2.1
 
 适用于 Windows 10/11 x64 的预发行版。
 

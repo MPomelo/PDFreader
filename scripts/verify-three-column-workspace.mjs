@@ -26,6 +26,14 @@ try {
     };
     window.qa = { open: [pdfPath], requests: [], cancels: [], writes: [], translations: [] };
     window.qa.chatgpt = { activeId: null, accounts: [], signingIn: false };
+    window.qa.chatApiProfiles = [];
+    const apiKeys = new Set();
+    const routeError = '此 API 配置的地址或鉴权方式已变更。请确认后重新发送。';
+    const apiProfile = (id, route) => {
+      const profile = window.qa.chatApiProfiles.find(item => item.id === id && item.route === route);
+      if (!profile) throw Error(routeError);
+      return profile;
+    };
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' } },
@@ -67,6 +75,34 @@ try {
           case 'api_cancel': window.qa.cancels.push(args.requestId); return;
           case 'chat_secret_status': return { mode: 'missing', available: false };
           case 'chat_ollama_models': return args.port === 11435 ? ['qwen3:4b'] : [];
+          case 'chat_api_profiles': return structuredClone(window.qa.chatApiProfiles);
+          case 'chat_api_save_profile': {
+            const before = args.expectedRoute ? apiProfile(args.profile.id, args.expectedRoute) : null;
+            const { id, baseUrl, auth } = args.profile;
+            const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode([id, baseUrl, auth].join('\0')));
+            const route = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+            const profile = { ...args.profile, route };
+            if (before) {
+              window.qa.chatApiProfiles = window.qa.chatApiProfiles.map(item => item.id === id ? profile : item);
+              if (before.route !== route) apiKeys.delete(before.route);
+            } else window.qa.chatApiProfiles.push(profile);
+            return { profile, warning: null };
+          }
+          case 'chat_api_secret_status': {
+            const { route } = apiProfile(args.id, args.route);
+            return { mode: apiKeys.has(route) ? 'session' : 'missing', available: apiKeys.has(route) };
+          }
+          case 'chat_api_secret_save': {
+            const { route } = apiProfile(args.id, args.route);
+            if (args.key !== 'dummy-chat-api-key') throw Error('Expected the fixture key');
+            apiKeys.add(route);
+            return { mode: 'session', available: true };
+          }
+          case 'chat_api_models': {
+            const profile = apiProfile(args.id, args.route);
+            if (profile.auth !== 'none' && !apiKeys.has(profile.route)) throw Error('Missing fixture key');
+            return ['fixture-chat', 'fixture-reasoning'];
+          }
           case 'chatgpt_status': return structuredClone(window.qa.chatgpt);
           case 'chatgpt_sign_in': {
             const id = args.accountId ?? 'oaiapp_browser_test';
@@ -85,17 +121,27 @@ try {
             window.qa.chatgpt.accounts[0].planEnabled = false;
             return { status: structuredClone(window.qa.chatgpt), revoked: true };
           }
-          case 'chat_request': return new Promise(resolve => {
+          case 'chat_request': {
             const { request, onChunk } = args;
-            const send = callbacks.get(onChunk.id);
-            window.qa.requests.push({ ...request, finish: () => {
-              send({ index: 2, message: { requestId: request.requestId, sessionId: request.sessionId, sequence: 3, text: 'late' } });
-              send({ index: 3, end: true });
-              resolve({ model: request.model, text: 'Answer ' + (request.messages.at(-1).text.match(/\[\[M[a-f0-9]+\]\]/)?.[0] ?? ''), usage: { input_tokens: 10, output_tokens: 2 } });
-            } });
-            send({ index: 0, message: { requestId: request.requestId, sessionId: 'different-session', sequence: 1, text: 'wrong session' } });
-            send({ index: 1, message: { requestId: request.requestId, sessionId: request.sessionId, sequence: 2, text: 'Partial answer' } });
-          });
+            if (request.provider === 'compatible') {
+              const profile = apiProfile(request.apiProfileId, request.apiProfileRoute);
+              if (profile.auth !== 'none' && !apiKeys.has(profile.route)) throw Error('Missing fixture key');
+              if (!profile.streaming) {
+                window.qa.requests.push(request);
+                return { model: request.model, text: 'Non-streaming answer', usage: { input_tokens: 4, output_tokens: 2 } };
+              }
+            }
+            return new Promise(resolve => {
+              const send = callbacks.get(onChunk.id);
+              window.qa.requests.push({ ...request, finish: () => {
+                send({ index: 2, message: { requestId: request.requestId, sessionId: request.sessionId, sequence: 3, text: 'late' } });
+                send({ index: 3, end: true });
+                resolve({ model: request.model, text: 'Answer ' + (request.messages.at(-1).text.match(/\[\[M[a-f0-9]+\]\]/)?.[0] ?? ''), usage: { input_tokens: 10, output_tokens: 2 } });
+              } });
+              send({ index: 0, message: { requestId: request.requestId, sessionId: 'different-session', sequence: 1, text: 'wrong session' } });
+              send({ index: 1, message: { requestId: request.requestId, sessionId: request.sessionId, sequence: 2, text: 'Partial answer' } });
+            });
+          }
           default: throw Error('Unexpected IPC ' + command);
         }
       },
@@ -371,9 +417,74 @@ try {
   await button('退出账户', chatSettings).click();
   await expect(button('使用 ChatGPT 登录', chatSettings)).toBeEnabled();
   await button('关闭设置').click();
-  await expect(page.getByText('请在 AI 对话设置中登录 ChatGPT。', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.getByText('请在「AI设置」中登录 ChatGPT。', { exact: true }).filter({ visible: true })).toBeVisible();
   await chat.fill('退出后不得发送');
   await expect(button('发送')).toBeDisabled();
+
+  await button('设置').click();
+  await button('翻译配置', chatSettings).click();
+  await expect(chatSettings.getByRole('heading', { name: '翻译配置' })).toBeVisible();
+  await button('AI设置', chatSettings).click();
+  await button('模型服务', chatSettings).click();
+  await chatSettings.getByLabel('配置服务', { exact: true }).selectOption('compatible');
+  const apiSettings = chatSettings.locator('.chat-api-settings');
+  await button('添加 API 配置', apiSettings).click();
+  await expect(apiSettings.getByLabel('API 地址', { exact: true })).toHaveValue('https://api.deepseek.com');
+  await button('保存 API 配置', apiSettings).click();
+  await apiSettings.getByLabel('API 密钥', { exact: true }).fill('dummy-chat-api-key');
+  await apiSettings.getByRole('checkbox', { name: '仅本次会话' }).check();
+  await button('保存密钥', apiSettings).click();
+  await expect(apiSettings.getByLabel('API 密钥', { exact: true })).toHaveValue('');
+  await button('读取模型列表', apiSettings).click();
+  await expect(apiSettings.getByRole('status')).toContainText('已读取 2 个模型');
+  await apiSettings.getByLabel('模型名称', { exact: true }).fill('fixture-chat');
+  await button('保存 API 配置', apiSettings).click();
+  await expect(apiSettings.getByRole('status')).toContainText('已保存 API 配置');
+  await apiSettings.getByLabel('服务模板', { exact: true }).selectOption({ label: '自定义' });
+  await button('添加 API 配置', apiSettings).click();
+  await apiSettings.getByLabel('配置名称', { exact: true }).fill('本机兼容 API');
+  await apiSettings.getByLabel('API 地址', { exact: true }).fill('http://127.0.0.1:4001/v1');
+  await apiSettings.getByLabel('鉴权方式', { exact: true }).selectOption('none');
+  await apiSettings.getByLabel('模型名称', { exact: true }).fill('fixture-local');
+  await apiSettings.getByRole('checkbox', { name: '流式输出' }).uncheck();
+  await button('保存 API 配置', apiSettings).click();
+  await expect(apiSettings.getByRole('status')).toContainText('已保存 API 配置');
+  await chatSettings.getByRole('checkbox', { name: '设为默认模型服务' }).check();
+  await button('保存对话设置', chatSettings).click();
+  await expect(chatSettings.getByText('已保存对话设置。', { exact: true })).toBeVisible();
+  await button('关闭设置').click();
+  await button('新对话').click();
+  await expect(button('选择模型')).toContainText('fixture-chat');
+  await chat.fill('兼容 API 问答');
+  await button('发送').click();
+  await expect(page.getByRole('log')).toContainText('Partial answer');
+  const firstApi = await page.evaluate(() => {
+    const request = window.qa.requests.at(-1);
+    const profile = window.qa.chatApiProfiles.find(item => item.name === 'DeepSeek');
+    return { exactProfile: request.apiProfileId === profile.id && request.apiProfileRoute === profile.route,
+      provider: request.provider, model: request.model, request: JSON.stringify(request) };
+  });
+  assert.equal(firstApi.exactProfile, true);
+  assert.equal(firstApi.provider, 'compatible');
+  assert.equal(firstApi.model, 'fixture-chat');
+  assert.ok(!firstApi.request.includes('dummy-chat-api-key') && !firstApi.request.includes('api.deepseek.com'));
+  await button('停止生成').click();
+  await button('选择模型').click();
+  await button('配置模型服务').click();
+  await apiSettings.getByLabel('API 地址', { exact: true }).fill('https://changed.example/v1');
+  await button('保存 API 配置', apiSettings).click();
+  await expect(apiSettings.getByRole('status')).toContainText('已保存 API 配置');
+  await button('关闭设置').click();
+  await button('重试').click();
+  await expect(page.getByRole('log').getByRole('alert')).toContainText('地址或鉴权方式已变更');
+
+  await button('选择模型').click();
+  await page.getByLabel('API 配置', { exact: true }).selectOption({ label: '本机兼容 API' });
+  await page.keyboard.press('Escape');
+  await chat.fill('使用第二个 API 配置');
+  await button('发送').click();
+  await expect(page.getByRole('log')).toContainText('Non-streaming answer');
+  await expect(page.getByRole('log')).toContainText('本机兼容 API · fixture-local');
   assert.deepEqual(errors, []);
   console.log('Three-column workspace and AI browser regressions passed.');
 } finally {

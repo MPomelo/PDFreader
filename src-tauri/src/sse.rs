@@ -19,7 +19,7 @@ impl Completion {
             if self.skip_lf { self.skip_lf = false; if byte == b'\n' { continue; } }
             if byte == b'\r' || byte == b'\n' {
                 self.skip_lf = byte == b'\r';
-                let line = String::from_utf8(std::mem::take(&mut self.bytes)).map_err(|_| "流式响应含无效 UTF-8，未得到完整译文。")?;
+                let line = String::from_utf8(std::mem::take(&mut self.bytes)).map_err(|_| "流式响应含无效 UTF-8，未得到完整正文。")?;
                 self.line(&line, &mut delta)?;
             } else {
                 if self.bytes.len() >= 256 * 1024 { return Err("单条流式事件过大。".into()); }
@@ -60,16 +60,16 @@ impl Completion {
         let choices = value["choices"].as_array().ok_or("流式响应缺少 choices。")?;
         for choice in choices {
             if choice["index"].as_u64().unwrap_or(0) != 0 { continue; }
-            if ["content", "reasoning_content", "reasoning"].iter().any(|field| !choice["delta"][field].is_null() && !choice["delta"][field].is_string()) { return Err("流式正文类型无效，当前译文未完成。".into()); }
+            if ["content", "reasoning_content", "reasoning"].iter().any(|field| !choice["delta"][field].is_null() && !choice["delta"][field].is_string()) { return Err("流式正文类型无效，当前回复未完成。".into()); }
             let content = choice["delta"]["content"].as_str().unwrap_or("");
             let reasoning = choice["delta"]["reasoning_content"].as_str().or_else(|| choice["delta"]["reasoning"].as_str()).unwrap_or("");
-            if self.finished.is_some() && (!content.is_empty() || !reasoning.is_empty()) { return Err("服务在结束事件后继续返回正文，未确认为完整译文。".into()); }
+            if self.finished.is_some() && (!content.is_empty() || !reasoning.is_empty()) { return Err("服务在结束事件后继续返回正文，当前回复未完成。".into()); }
             self.text.push_str(content); delta.content.push_str(content);
             self.reasoning.push_str(reasoning); delta.reasoning.push_str(reasoning);
-            if self.text.len() + self.reasoning.len() > 2 * 1024 * 1024 { return Err("流式译文超过大小限制。".into()); }
+            if self.text.len() + self.reasoning.len() > 2 * 1024 * 1024 { return Err("流式回复超过大小限制。".into()); }
             if let Some(reason) = choice["finish_reason"].as_str() {
                 if reason != "stop" {
-                    return Err(match reason { "length" => "输出被截断，当前译文未完成；请缩短选区或提高输出上限。", "content_filter" => "输出被服务过滤，当前译文未完成。", _ => "流式响应异常结束，当前译文未完成。" }.into());
+                    return Err(match reason { "length" => "输出被截断，请缩短上下文后重试。", "content_filter" => "输出被服务过滤。", _ => "流式响应异常结束。" }.into());
                 }
                 self.finished = Some(reason.into());
             }
@@ -80,6 +80,14 @@ impl Completion {
         if !self.done || self.finished.as_deref() != Some("stop") { return Err("流式连接中断或未正常结束；当前内容未完成，可切换非流式后手动重试。".into()); }
         if self.text.trim().is_empty() { return Err("未得到正式译文，只有思考内容或空响应。".into()); }
         Ok(json!({"model":self.model,"choices":[{"finish_reason":"stop","message":{"content":self.text,"reasoning_content":self.reasoning}}],"usage":self.usage}))
+    }
+    pub fn confirm_chat(&self) -> Result<(), String> {
+        // Some compatible gateways close the stream immediately after a terminal stop event.
+        if self.finished.as_deref() != Some("stop") || !self.bytes.is_empty() || !self.data.is_empty() || !self.event.is_empty() {
+            return Err("API 流式回复未正常结束。可在 AI设置中关闭流式输出后手动重试。".into());
+        }
+        if self.text.trim().is_empty() { return Err("API 没有返回正文。".into()); }
+        Ok(())
     }
 }
 

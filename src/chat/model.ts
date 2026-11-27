@@ -1,23 +1,27 @@
-export type Provider = 'openai' | 'anthropic' | 'ollama' | 'chatgpt';
+export type Provider = 'openai' | 'anthropic' | 'ollama' | 'chatgpt' | 'compatible';
 export type MaterialMode = 'selection' | 'page' | 'document';
 export type Material = { id: string; documentId: string; name: string; text: string; page?: number; line?: number; fingerprint?: string; position?: { x: number; y: number } };
 export type Turn = {
   id: string; prompt: string; materials: Material[]; provider: Provider; model: string;
   text: string; state: 'streaming' | 'complete' | 'stopped' | 'failed';
   usage?: Record<string, number>; error?: string; instruction?: string; ollamaPort?: number; chatgptAccount?: string;
+  apiProfileId?: string; apiProfileRoute?: string; apiProfileName?: string;
 };
 export type Conversation = { id: string; turns: Turn[]; updated: string };
 export type ChatCommand = { name: string; instruction: string };
 export type ChatPreferences = {
   provider: Provider; models: Record<Provider, string>; prompt: string;
   ollamaPort: number; sendShortcut: 'enter' | 'ctrl-enter'; commands: ChatCommand[];
+  apiProfileId: string;
 };
 export type ChatData = { version: 1; conversations: Conversation[]; preferences: ChatPreferences };
-export const providerName: Record<Provider, string> = { chatgpt: 'ChatGPT 订阅', openai: 'OpenAI API', anthropic: 'Anthropic Claude', ollama: 'Ollama 本地' };
+export const providerName: Record<Provider, string> = {
+  ollama: 'Ollama 本地', chatgpt: 'ChatGPT 订阅', compatible: '第三方 API（OpenAI 兼容）', openai: 'OpenAI API', anthropic: 'Anthropic Claude',
+};
 export const providers = Object.keys(providerName) as Provider[];
 export const defaultChat = (): ChatData => ({ version: 1, conversations: [], preferences: {
-  provider: 'openai', models: { openai: 'gpt-5-mini', anthropic: 'claude-sonnet-4-6', ollama: '', chatgpt: '' }, prompt: '',
-  ollamaPort: 11434, sendShortcut: 'enter',
+  provider: 'openai', models: { openai: 'gpt-5-mini', anthropic: 'claude-sonnet-4-6', ollama: '', chatgpt: '', compatible: '' }, prompt: '',
+  ollamaPort: 11434, sendShortcut: 'enter', apiProfileId: '',
   commands: [
     { name: '总结', instruction: '总结问题提到的内容。若附有资料，概括其要点和结论。' },
     { name: '解释', instruction: '用中文逐步解释问题或资料中的概念，必要时给出例子。' },
@@ -26,6 +30,7 @@ export const defaultChat = (): ChatData => ({ version: 1, conversations: [], pre
 } });
 export const materialMarker = (material: Material) => 'M' + material.id.replaceAll('-', '');
 export const conversationName = (conversation: Conversation) => conversation.turns[0]?.prompt.trim().replace(/\s+/g, ' ').slice(0, 55) || 'AI 对话';
+export const turnProviderName = (turn: Turn) => turn.apiProfileName || providerName[turn.provider];
 const text = (value: unknown, limit: number) => typeof value === 'string' && value.length <= limit;
 export const validOllamaPort = (port: number) => Number.isInteger(port) && port >= 1 && port <= 65535;
 export function validCommands(commands: ChatCommand[]) {
@@ -41,10 +46,11 @@ export function validateChat(value: unknown): ChatData {
   const preferences = {
     ...defaults, ...stored, models: { ...stored?.models,
       ollama: stored?.models?.ollama ?? defaults.models.ollama, chatgpt: stored?.models?.chatgpt ?? defaults.models.chatgpt,
+      compatible: stored?.models?.compatible ?? defaults.models.compatible,
     },
   };
   const validPreferences = stored && providers.includes(preferences.provider) &&
-    providers.every(provider => text(preferences.models[provider], 256)) && text(preferences.prompt, 4000) &&
+    providers.every(provider => text(preferences.models[provider], 256)) && text(preferences.prompt, 4000) && text(preferences.apiProfileId, 80) &&
     validOllamaPort(preferences.ollamaPort) && ['enter', 'ctrl-enter'].includes(preferences.sendShortcut) && validCommands(preferences.commands);
   const validConversations = Array.isArray(data?.conversations) && data.conversations.length <= 100 &&
     data.conversations.every(item => item && text(item.id, 128) && text(item.updated, 50) && Array.isArray(item.turns) &&
@@ -53,6 +59,9 @@ export function validateChat(value: unknown): ChatData {
       (turn.instruction === undefined || text(turn.instruction, 4000)) &&
       (turn.ollamaPort === undefined || validOllamaPort(turn.ollamaPort)) &&
       (turn.chatgptAccount === undefined || text(turn.chatgptAccount, 256)) &&
+      (turn.apiProfileId === undefined || text(turn.apiProfileId, 80)) &&
+      (turn.apiProfileRoute === undefined || typeof turn.apiProfileRoute === 'string' && /^[a-f0-9]{64}$/.test(turn.apiProfileRoute)) &&
+      (turn.apiProfileName === undefined || text(turn.apiProfileName, 160)) &&
       ['complete', 'streaming', 'stopped', 'failed'].includes(turn.state) && Array.isArray(turn.materials) &&
       turn.materials.length <= 32 && turn.materials.every(material => material && typeof material.id === 'string' && /^[a-f0-9-]{36}$/.test(material.id) &&
         text(material.documentId, 128) && (material.position === undefined || material.position &&

@@ -7,6 +7,7 @@ mod http;
 mod sse;
 mod translation;
 mod chat;
+mod chat_api;
 mod chatgpt;
 mod chatgpt_oauth;
 mod local;
@@ -121,6 +122,8 @@ fn main() {
             translation::api_load, translation::api_save, translation::api_secret_status,
             translation::api_secret_save, translation::api_secret_delete, translation::api_request, translation::api_stream_request, translation::api_cancel,
             chat::chat_secret_status, chat::chat_secret_save, chat::chat_secret_delete, chat::chat_ollama_models, chat::chat_request,
+            chat_api::chat_api_profiles, chat_api::chat_api_save_profile, chat_api::chat_api_delete_profile,
+            chat_api::chat_api_secret_status, chat_api::chat_api_secret_save, chat_api::chat_api_secret_delete, chat_api::chat_api_models,
             chatgpt::chatgpt_status, chatgpt::chatgpt_sign_in, chatgpt::chatgpt_cancel_sign_in, chatgpt::chatgpt_select_account,
             chatgpt::chatgpt_sign_out, chatgpt::chatgpt_models, chatgpt::chatgpt_open_usage])
         .on_window_event(|window, event| {

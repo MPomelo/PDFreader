@@ -40,6 +40,8 @@
 .chat-settings-save { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .chat-settings-save p { margin: 0; overflow-wrap: anywhere; }
 .chat-command-settings { padding-block-end: 8px; margin-block-end: 8px; border-bottom: 1px solid var(--border); }
+.chat-api-settings { min-width: 0; padding: 0; margin: 14px 0 0; border: 0; border-top: 1px solid var(--border); }
+.chat-api-settings .chat-settings-actions { margin-block: 6px; }
 .chatgpt-settings { margin-block-start: 14px; padding-block-start: 1px; border-top: 1px solid var(--border); }
 .chatgpt-settings .chatgpt-login { color: light-dark(#fff, #131313); background: light-dark(#171717, #f2f2f2); padding-inline: 14px; }
 .chatgpt-settings .chatgpt-login:hover { background: light-dark(#343434, #e0e0e0); }
