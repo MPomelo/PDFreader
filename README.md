@@ -4,7 +4,7 @@
 
 A local Windows workspace for reading and annotating PDFs, writing Markdown notes, and editing plain text.
 
-[下载 PDFreader 2.2.2](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.2) · [使用说明](docs/WORKSPACE_TABS_AND_SETTINGS.md) · [构建与贡献](CONTRIBUTING.md) · [隐私说明](docs/PRIVACY.md)
+[下载 PDFreader 2.2.3](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.3) · [使用说明](docs/WORKSPACE_TABS_AND_SETTINGS.md) · [构建与贡献](CONTRIBUTING.md) · [隐私说明](docs/PRIVACY.md)
 
 ![PDFreader 阅读与翻译界面](docs/assets/workspace-light.png)
 
@@ -27,15 +27,15 @@ A local Windows workspace for reading and annotating PDFs, writing Markdown note
 
 ## 安装与开始
 
-当前源码版本为 **2.2.2**，适用于 Windows 10/11 x64。[查看版本说明](docs/RELEASE_NOTES.md)。
+当前源码版本为 **2.2.3**，适用于 Windows 10/11 x64。[查看版本说明](docs/RELEASE_NOTES.md)。
 
-1. 在 [2.2.2 预发行版](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.2) 下载 x64 的 `-setup.exe`，核对同版本 SHA256SUMS。
+1. 在 [2.2.3 预发行版](https://github.com/MPomelo/PDFreader/releases/tag/v2.2.3) 下载 x64 的 `-setup.exe`，核对同版本 SHA256SUMS。
 2. 运行安装程序。应用使用 Microsoft Edge WebView2 Runtime；已有运行时可离线阅读，缺失时安装程序需要联网下载安装运行时。日常使用无需 Node.js 或 Python。
 3. 点击“打开”选择文档，或通过“＋”新建 Markdown 和 TXT。PDF 也可从资源管理器的“打开方式”打开。
 4. 需要翻译时，在“设置 → 翻译配置”配置服务和密钥，保存后选择文字，按 Ctrl+Shift+Enter。
 5. 需要使用 ChatGPT 订阅对话时，进入「设置 → AI设置 → 模型服务」，选择「ChatGPT 订阅」并登录授权。
 
-带更新功能的 2.2.2 安装包为 `PDFreader_2.2.2_x64-updater-setup.exe`，校验文件为 `SHA256SUMS-updater.txt`。安装后在「设置 → 应用更新」检查新版本。
+安装 2.2.3 后，可在「设置 → 应用更新」检查、下载并安装后续版本。已安装 2.2.2 的用户可从发布页下载 2.2.3 安装包完成首次升级。
 
 安装包目前未做代码签名，Windows 可能显示未知发布者提示。只在确认下载来源与校验和后继续。翻译使用你配置的外部 API，费用与隐私规则由对应服务决定；自动翻译每次启动默认关闭。
 

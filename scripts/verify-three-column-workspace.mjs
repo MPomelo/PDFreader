@@ -6,6 +6,9 @@ import { createServer } from 'vite';
 const pdfPath = 'C:/fixtures/paper.pdf';
 const markdownPath = 'C:/fixtures/notes.md';
 const textPath = 'C:/fixtures/notes.txt';
+const { version: appVersion } = JSON.parse(await readFile('package.json', 'utf8'));
+const [major, minor, patch] = appVersion.split('.').map(Number);
+const nextVersion = `${major}.${minor}.${patch + 1}`;
 const pdf = (await readFile('docs/assets/research-notes.pdf')).toString('base64');
 const server = await createServer({ cacheDir: 'node_modules/.vite/three-column', server: { port: 0 } });
 await server.listen();
@@ -16,7 +19,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 875 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(({ pdf, pdfPath, markdownPath, textPath }) => {
+  await page.addInitScript(({ pdf, pdfPath, markdownPath, textPath, appVersion, nextVersion }) => {
     if (window !== window.top) return;
     const callbacks = new Map();
     let lastCallback = 1;
@@ -28,7 +31,7 @@ try {
     window.qa.chatgpt = { activeId: null, accounts: [], signingIn: false };
     window.qa.chatApiProfiles = [];
     window.qa.updateInstalls = 0;
-    const update = { currentVersion: '2.2.2', available: null, downloaded: false, busy: false, downloading: false };
+    const update = { currentVersion: appVersion, available: null, downloaded: false, busy: false, downloading: false };
     const apiKeys = new Set();
     const routeError = '此 API 配置的地址或鉴权方式已变更。请确认后重新发送。';
     const apiProfile = (id, route) => {
@@ -47,7 +50,7 @@ try {
           case 'plugin:window|is_maximized': return false;
           case 'update_status': return structuredClone(update);
           case 'update_check': {
-            update.available = args.includePrerelease ? { version: '2.2.3', prerelease: true, size: 12_000_000 } : null;
+            update.available = args.includePrerelease ? { version: nextVersion, prerelease: true, size: 12_000_000 } : null;
             return structuredClone(update);
           }
           case 'update_download': {
@@ -161,7 +164,7 @@ try {
         }
       },
     };
-  }, { pdf, pdfPath, markdownPath, textPath });
+  }, { pdf, pdfPath, markdownPath, textPath, appVersion, nextVersion });
 
   await page.goto(server.resolvedUrls.local[0]);
   const button = (name, locator = page) => locator.getByRole('button', { name, exact: true });
@@ -505,14 +508,14 @@ try {
   await txt.fill('通过更新前的未保存内容');
   await button('设置').click();
   await button('应用更新', chatSettings).click();
-  await expect(chatSettings.getByText('当前版本 2.2.2')).toBeVisible();
+  await expect(chatSettings.getByText(`当前版本 ${appVersion}`, { exact: true })).toBeVisible();
   const includePrerelease = chatSettings.getByRole('checkbox', { name: '包括预发行版' });
   await includePrerelease.uncheck();
   await button('检查更新', chatSettings).click();
   await expect(chatSettings.getByRole('status')).toContainText('没有可用的正式版更新');
   await includePrerelease.check();
   await button('检查更新', chatSettings).click();
-  await expect(chatSettings.getByText('2.2.3', { exact: true })).toBeVisible();
+  await expect(chatSettings.getByText(nextVersion, { exact: true })).toBeVisible();
   await button('下载更新', chatSettings).click();
   await expect(chatSettings.getByText(/安装包已通过 SHA-256 校验/)).toBeVisible();
   await button('退出并安装', chatSettings).click();
